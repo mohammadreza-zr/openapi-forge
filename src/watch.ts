@@ -9,10 +9,13 @@ const DEBOUNCE_MS = 150;
  * @param {() => Promise<void>} rebuild
  * @param {{ paths: string[], poll?: number }} where  `poll` is in seconds
  */
-export function watchRun(rebuild, { paths, poll }) {
+export function watchRun(
+  rebuild: () => Promise<void>,
+  { paths, poll }: { paths: string[]; poll?: number },
+): () => void {
   let running = false;
   let again = false;
-  let timer;
+  let timer: NodeJS.Timeout | undefined;
 
   const run = async () => {
     if (running) {
@@ -23,7 +26,7 @@ export function watchRun(rebuild, { paths, poll }) {
     try {
       await rebuild();
     } catch (error) {
-      console.error(error.message);
+      console.error(error instanceof Error ? error.message : String(error));
     }
     running = false;
     if (again) {
@@ -37,9 +40,9 @@ export function watchRun(rebuild, { paths, poll }) {
   };
 
   const watchers = paths
-    .filter((path) => existsSync(path))
-    .map((path) => watch(path, { recursive: true }, schedule));
-  const poller = poll ? setInterval(run, poll * 1000) : null;
+    .filter((path: string) => existsSync(path))
+    .map((path: string) => watch(path, { recursive: true }, schedule));
+  const poller = poll ? setInterval(run, poll * 1000) : undefined;
 
   run();
   return () => {

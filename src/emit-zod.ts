@@ -1,12 +1,13 @@
 // Zod validators for the document's component schemas (`schemas.ts`). Each
 // one is annotated with its `models.ts` type, so the two cannot drift apart:
 // a schema that no longer matches its type fails to compile.
-import { camelCase, modelName, propertyName } from "./names.mjs";
+import { camelCase, modelName, propertyName } from "./names.js";
+import type { OpenApiDocument, Schema } from "./types.js";
 
-const refName = (ref) => `${camelCase(modelName(ref))}Schema`;
-const list = (items) => items.join(", ");
+const refName = (ref: string): string => `${camelCase(modelName(ref))}Schema`;
+const list = (items: string[]): string => items.join(", ");
 
-function render(schema) {
+function render(schema: Schema | boolean | undefined): string {
   if (schema === true) return "z.unknown()";
   if (!schema || typeof schema !== "object") return "z.unknown()";
   let out = base(schema);
@@ -14,7 +15,7 @@ function render(schema) {
   return out;
 }
 
-function base(schema) {
+function base(schema: Schema): string {
   if (schema.$ref) return `z.lazy(() => ${refName(schema.$ref)})`;
   for (const key of ["oneOf", "anyOf"]) {
     const parts = schema[key];
@@ -59,9 +60,9 @@ function base(schema) {
   }
 }
 
-function object(schema) {
+function object(schema: Schema): string {
   const required = new Set(schema.required ?? []);
-  const fields = Object.entries(schema.properties).map(([name, child]) => {
+  const fields = Object.entries(schema.properties ?? {}).map(([name, child]) => {
     const value = render(child);
     return `  ${propertyName(name)}: ${required.has(name) ? value : `${value}.optional()`},`;
   });
@@ -69,7 +70,10 @@ function object(schema) {
 }
 
 /** `schemas.ts` for `spec`, or `null` when it has no component schemas. */
-export function emitZod(spec, { banner, skip = () => false }) {
+export function emitZod(
+  spec: OpenApiDocument,
+  { banner, skip = () => false }: { banner: string; skip?: (name: string) => boolean },
+): string | null {
   const blocks = Object.entries(spec.components?.schemas ?? {})
     .filter(([name]) => !skip(name))
     .map(([name, schema]) => {
@@ -77,7 +81,7 @@ export function emitZod(spec, { banner, skip = () => false }) {
       return `export const ${refName(name)}: z.ZodType<${type}> = ${render(schema)};`;
     });
   if (!blocks.length) return null;
-  const types = Object.keys(spec.components.schemas)
+  const types = Object.keys(spec.components?.schemas ?? {})
     .filter((name) => !skip(name))
     .map(modelName)
     .sort();

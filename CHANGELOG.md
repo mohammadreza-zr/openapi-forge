@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Rewritten in strict TypeScript: the package ships `dist/` with `.d.ts` files, and `run`, `emit`, `generate`, `defineConfig` and the config types are typed.
+
 ## 0.2.0
 
 - Swagger 2.0 input (converted to OpenAPI 3.0) and OpenAPI 3.1 spellings.

@@ -7,7 +7,29 @@ import { get as httpsGet } from "node:https";
 import { isAbsolute, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { upgradeDocument } from "./upgrade.mjs";
+import type { OpenApiDocument } from "../types.js";
+import { upgradeDocument } from "./upgrade.js";
+
+interface RequestOptions {
+  headers?: Record<string, string>;
+  ca?: string;
+  rejectUnauthorized?: boolean;
+  redirects?: number;
+}
+
+/** What reading a document needs beyond its location. */
+export interface ReadOptions {
+  headers?: Record<string, string>;
+  tls?: { insecure?: boolean; ca?: string };
+  cwd: string;
+}
+
+/** A thrown value, as far as an error message needs it. */
+type Failure = {
+  message?: string;
+  code?: string;
+  cause?: { code?: string; message?: string };
+} | null | undefined;
 
 const TAG = "openapi-forge";
 
@@ -17,12 +39,12 @@ const TAG = "openapi-forge";
  * the builtin `node:https` client instead — same headers, same redirects.
  */
 function nodeRequestText(
-  url,
-  { headers, ca, rejectUnauthorized, redirects = 5 },
-) {
+  url: string,
+  { headers, ca, rejectUnauthorized, redirects = 5 }: RequestOptions,
+): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
     const isHttps = url.startsWith("https:");
-    const options = { headers };
+    const options: RequestOptions = { headers };
     if (isHttps) {
       options.rejectUnauthorized = rejectUnauthorized;
       if (ca !== undefined) options.ca = ca;
@@ -67,12 +89,12 @@ function nodeRequestText(
   });
 }
 
-const isTlsFailure = (error) =>
+const isTlsFailure = (error: Failure): boolean =>
   /cert|tls|ssl|self.signed|unable.to.get.issuer|unable.to.verify|handshake|ca cert/i.test(
     `${error?.cause?.code ?? error?.code ?? ""} ${error?.cause?.message ?? error?.message ?? ""}`,
   );
 
-const describeCause = (error) =>
+const describeCause = (error: Failure): string =>
   error?.cause?.code
     ? `${error.cause.code}: ${error.cause.message ?? error.message}`
     : (error?.message ?? String(error));
@@ -81,7 +103,7 @@ const describeCause = (error) =>
  * A bare `fetch failed` hides the cause: name the TLS failure and the ways
  * past a private CA instead of leaving the next reader to guess.
  */
-function tlsHintError(url, error) {
+function tlsHintError(url: string, error: Failure): unknown {
   if (!isTlsFailure(error)) return error;
   return new Error(
     `${TAG}: TLS verification failed for ${url} (${describeCause(error)}).\n` +
@@ -93,7 +115,10 @@ function tlsHintError(url, error) {
   );
 }
 
-async function readCa(caFile, cwd) {
+async function readCa(
+  caFile: string | undefined,
+  cwd: string,
+): Promise<string | undefined> {
   if (!caFile) return undefined;
   const candidates = isAbsolute(caFile)
     ? [caFile]
@@ -111,10 +136,13 @@ async function readCa(caFile, cwd) {
   );
 }
 
-export const isUrl = (value) => /^https?:\/\//.test(String(value));
+export const isUrl = (value: unknown): boolean => /^https?:\/\//.test(String(value));
 
 /** The text behind a URL, honouring headers and the TLS options. */
-export async function fetchText(url, { headers, tls = {}, cwd }) {
+export async function fetchText(
+  url: string,
+  { headers, tls = {}, cwd }: ReadOptions,
+): Promise<string> {
   const insecure = tls.insecure === true;
   if (url.startsWith("https:") && (insecure || tls.ca)) {
     if (insecure) {
@@ -131,17 +159,17 @@ export async function fetchText(url, { headers, tls = {}, cwd }) {
         rejectUnauthorized: !insecure,
       });
     } catch (error) {
-      throw tlsHintError(url, error);
+      throw tlsHintError(url, error as Failure);
     }
   }
-  let response;
+  let response: Response;
   try {
     response = await fetch(url, {
       headers,
       signal: AbortSignal.timeout(60_000),
     });
   } catch (error) {
-    throw tlsHintError(url, error);
+    throw tlsHintError(url, error as Failure);
   }
   if (!response.ok) {
     throw new Error(
@@ -152,15 +180,18 @@ export async function fetchText(url, { headers, tls = {}, cwd }) {
 }
 
 /** A JSON or YAML text as a document; JSON is valid YAML, so one parser suffices. */
-export function parseDocument(text, where = "the document") {
-  let doc;
+export function parseDocument(
+  text: string,
+  where = "the document",
+): OpenApiDocument {
+  let doc: unknown;
   try {
     doc = parseYaml(text);
   } catch (error) {
     throw new Error(
       `${TAG}: ${where} is neither valid JSON nor valid YAML. ` +
         "Export the spec as JSON or YAML (Swashbuckle: …/swagger/v1/swagger.json, " +
-        `…/openapi.yaml). ${error.message}`,
+        `…/openapi.yaml). ${(error as Error).message}`,
     );
   }
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
@@ -168,11 +199,14 @@ export function parseDocument(text, where = "the document") {
       `${TAG}: ${where} is empty or not an OpenAPI object — it has no \`openapi\` or \`paths\`.`,
     );
   }
-  return upgradeDocument(doc);
+  return upgradeDocument(doc as OpenApiDocument);
 }
 
 /** One document, from a URL or a path. */
-export async function readDocument(location, { headers, tls, cwd }) {
+export async function readDocument(
+  location: string,
+  { headers, tls, cwd }: ReadOptions,
+): Promise<OpenApiDocument> {
   const text = isUrl(location)
     ? await fetchText(location, { headers, tls, cwd })
     : await readFile(resolve(cwd, location), "utf8");

@@ -4,11 +4,32 @@
 // the same and needs an owner when they differ. Owners come from the
 // committed choices (the decisions file), so a build never guesses.
 
-const HTTP_METHODS = ["get", "put", "post", "patch", "delete"];
+import type {
+  HttpMethod,
+  Loose,
+  MergeReport,
+  OpenApiDocument,
+  OperationObject,
+  Service,
+} from "../types.js";
+
+const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "patch", "delete"];
+
+interface OperationEntry {
+  path: string;
+  method: HttpMethod;
+  operation: OperationObject;
+}
+
+interface ComponentEntry {
+  section: string;
+  name: string;
+  node: Loose;
+}
 
 const COMPONENT_REF = /^#\/components\/([^/]+)\/(.+)$/;
 
-function sortedKeys(node) {
+function sortedKeys(node: Loose): Loose {
   if (Array.isArray(node)) return node.map(sortedKeys);
   if (!node || typeof node !== "object") return node;
   return Object.fromEntries(
@@ -20,12 +41,16 @@ function sortedKeys(node) {
 
 // References stay names: a component that differs is a conflict of its own,
 // so every operation naming it is not reported again.
-const fingerprint = (node) => JSON.stringify(sortedKeys(node));
+const fingerprint = (node: Loose): string => JSON.stringify(sortedKeys(node));
 
 /** Every component `$ref` a node names, directly or through other components. */
-function referencedComponents(node, doc, found = new Set()) {
+function referencedComponents(
+  node: Loose,
+  doc: OpenApiDocument,
+  found = new Set<string>(),
+): Set<string> {
   if (Array.isArray(node)) {
-    node.forEach((item) => referencedComponents(item, doc, found));
+    node.forEach((item: Loose) => referencedComponents(item, doc, found));
   } else if (node && typeof node === "object") {
     if (typeof node.$ref === "string" && !found.has(node.$ref)) {
       const match = COMPONENT_REF.exec(node.$ref);
@@ -45,8 +70,8 @@ function referencedComponents(node, doc, found = new Set()) {
   return found;
 }
 
-function operationsOf(doc) {
-  const operations = new Map();
+function operationsOf(doc: OpenApiDocument): Map<string, OperationEntry> {
+  const operations = new Map<string, OperationEntry>();
   for (const [path, item] of Object.entries(doc.paths ?? {})) {
     for (const method of HTTP_METHODS) {
       if (!item?.[method]) continue;
@@ -67,10 +92,10 @@ function operationsOf(doc) {
   return operations;
 }
 
-function componentsOf(doc) {
-  const components = new Map();
+function componentsOf(doc: OpenApiDocument): Map<string, ComponentEntry> {
+  const components = new Map<string, ComponentEntry>();
   for (const [section, entries] of Object.entries(doc.components ?? {})) {
-    for (const [name, node] of Object.entries(entries ?? {})) {
+    for (const [name, node] of Object.entries<Loose>(entries ?? {})) {
       components.set(`#/components/${section}/${name}`, {
         section,
         name,
@@ -85,17 +110,24 @@ function componentsOf(doc) {
  * Picks one copy per key. `entriesByService` maps a service to its
  * key → entry map; `nodeOf` reads what gets compared.
  */
-function reconcile(services, entriesByService, nodeOf, choices, report) {
-  const picked = new Map();
+function reconcile<T extends object>(
+  services: Service[],
+  entriesByService: Map<string, Map<string, T>>,
+  nodeOf: (entry: T) => unknown,
+  choices: Record<string, string>,
+  report: MergeReport,
+): Map<string, T & { service: string }> {
+  const picked = new Map<string, T & { service: string }>();
   const keys = new Set(
-    services.flatMap(({ name }) => [...entriesByService.get(name).keys()]),
+    services.flatMap(({ name }) => [...entriesByService.get(name)!.keys()]),
   );
 
   for (const key of [...keys].sort()) {
     const holders = services.filter(({ name }) =>
-      entriesByService.get(name).has(key),
+      entriesByService.get(name)!.has(key),
     );
-    const entry = (service) => entriesByService.get(service.name).get(key);
+    const entry = (service: Service): T =>
+      entriesByService.get(service.name)!.get(key)!;
     if (holders.length === 1) {
       picked.set(key, { service: holders[0].name, ...entry(holders[0]) });
       continue;
@@ -117,7 +149,7 @@ function reconcile(services, entriesByService, nodeOf, choices, report) {
       continue;
     }
     report.chosen.push({ key, services: names, owner });
-    const holder = holders.find((service) => service.name === owner);
+    const holder = holders.find((service) => service.name === owner)!;
     picked.set(key, { service: owner, ...entry(holder) });
   }
 
@@ -130,8 +162,11 @@ function reconcile(services, entriesByService, nodeOf, choices, report) {
  * @param {Record<string, string>} choices  key → owning service, where a key
  *   is `"POST /api/v1/cameras"` or `"#/components/schemas/VehicleGroup"`.
  */
-export function mergeSpecs(services, choices = {}) {
-  const report = { identical: [], chosen: [], undecided: [], crossRefs: [] };
+export function mergeSpecs(
+  services: Service[],
+  choices: Record<string, string> = {},
+): { doc: OpenApiDocument; report: MergeReport } {
+  const report: MergeReport = { identical: [], chosen: [], undecided: [], crossRefs: [] };
 
   const operations = reconcile(
     services,
@@ -156,7 +191,7 @@ export function mergeSpecs(services, choices = {}) {
       .map(({ key, owner }) => [key, owner]),
   );
 
-  const doc = {
+  const doc: Loose = {
     openapi: services[0].doc.openapi,
     info: services[0].doc.info,
     tags: [],
@@ -178,7 +213,7 @@ export function mergeSpecs(services, choices = {}) {
     doc.paths[path] ??= {};
     doc.paths[path][method] = { ...operation, "x-service": service };
 
-    const source = services.find(({ name }) => name === service).doc;
+    const source = services.find(({ name }) => name === service)!.doc;
     for (const ref of referencedComponents(operation, source)) {
       const owner = contested.get(ref);
       if (owner && owner !== service) {

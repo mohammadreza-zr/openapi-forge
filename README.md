@@ -200,7 +200,9 @@ never ask; they fail listing what is still undecided. Operations carry `x-servic
 
 ## Programmatic use
 
-```js
+The package is written in strict TypeScript and ships its own declarations (Node ≥ 20).
+
+```ts
 import { run, emit, mergeSpecs, defineConfig } from "@mrzr/openapi-forge";
 
 await run({ input: "swagger.json", out: "src/api" });                 // like the CLI
@@ -213,6 +215,6 @@ const { files } = emit(doc, resolvedOptions, "swagger.json");          // name �
 - A `DELETE` that takes a body is skipped with a warning — the request functions cannot send one.
 - A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows.
 - Prettier is optional: the project's own is used when installed (with its config); otherwise output is raw.
-- Tests: `npm test`.
+- Tests: `npm test` (builds, then runs the suite); `npm run typecheck` checks the types only.
 
 MIT

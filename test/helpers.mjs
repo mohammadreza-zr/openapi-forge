@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
-import { resolveOptions } from "../src/config.mjs";
+import { resolveOptions } from "../dist/config.js";
 
 export const FIXTURE = fileURLToPath(
   new URL("./fixtures/petstore.yaml", import.meta.url),

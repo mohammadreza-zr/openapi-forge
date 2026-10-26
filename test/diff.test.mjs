@@ -6,7 +6,7 @@ import {
   exceeds,
   renderReport,
   summarize,
-} from "../src/diff.mjs";
+} from "../dist/diff.js";
 
 const base = () => ({
   openapi: "3.0.1",

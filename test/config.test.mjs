@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { merge, resolveOptions } from "../src/config.mjs";
+import { merge, resolveOptions } from "../dist/config.js";
 
 test("defaults are filled in", () => {
   const options = resolveOptions();

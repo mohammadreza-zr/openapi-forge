@@ -4,6 +4,8 @@ import { access } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import type { ForgeConfig, ForgeOptions, RuntimeConfig } from "./types.js";
+
 export const CONFIG_FILES = [
   "openapi-forge.config.mjs",
   "openapi-forge.config.js",
@@ -16,7 +18,7 @@ export const CONFIG_FILES = [
  * runtime files the generator writes beside the API layer; with
  * `client: "custom"` they name the project's own transport and hooks.
  */
-export const BUILTIN_RUNTIME = {
+export const BUILTIN_RUNTIME: RuntimeConfig = {
   /** Where the request functions come from, and what each verb is called. */
   callers: {
     module: "./client",
@@ -68,7 +70,7 @@ export const BUILTIN_RUNTIME = {
   services: { module: undefined, fn: undefined, baseUrls: {} },
 };
 
-export const DEFAULTS = {
+export const DEFAULTS: ForgeOptions = {
   /** A document (file or URL), a folder of documents, or `{ name: fileOrUrl }`. */
   input: "openapi.json",
   out: "src/api/generated",
@@ -113,25 +115,25 @@ export const DEFAULTS = {
   verbose: false,
 };
 
-const isObject = (value) =>
+const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 /** Deep merge for plain objects; arrays and everything else are replaced. */
-export function merge(base, patch) {
+export function merge<T>(base: T, patch: unknown): T {
   if (patch === undefined) return base;
-  if (!isObject(base) || !isObject(patch)) return patch;
-  const out = { ...base };
+  if (!isObject(base) || !isObject(patch)) return patch as T;
+  const out: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(patch)) {
     out[key] = key in base ? merge(base[key], value) : value;
   }
-  return out;
+  return out as T;
 }
 
-export function defineConfig(config) {
+export function defineConfig(config: ForgeConfig): ForgeConfig {
   return config;
 }
 
-async function exists(file) {
+async function exists(file: string): Promise<boolean> {
   try {
     await access(file);
     return true;
@@ -141,7 +143,10 @@ async function exists(file) {
 }
 
 /** The config file of `cwd` — the one named, or the first default found. */
-export async function loadConfigFile(cwd, explicit) {
+export async function loadConfigFile(
+  cwd: string,
+  explicit?: string,
+): Promise<{ file: string | null; config: ForgeConfig }> {
   const candidates = explicit ? [explicit] : CONFIG_FILES;
   for (const name of candidates) {
     const file = isAbsolute(name) ? name : resolve(cwd, name);
@@ -169,7 +174,10 @@ export async function loadConfigFile(cwd, explicit) {
  * line. A custom client starts from no runtime of its own — the project says
  * where its transport lives — while the built-in one has it all.
  */
-export function resolveOptions(fileConfig = {}, cliOptions = {}) {
+export function resolveOptions(
+  fileConfig: ForgeConfig = {},
+  cliOptions: ForgeConfig = {},
+): ForgeOptions {
   const merged = merge(merge(DEFAULTS, fileConfig), cliOptions);
   if (!["builtin", "custom"].includes(merged.client)) {
     throw new Error(
@@ -181,14 +189,15 @@ export function resolveOptions(fileConfig = {}, cliOptions = {}) {
       `openapi-forge: target must be "hooks" or "requests", not ${JSON.stringify(merged.target)}.`,
     );
   }
-  if (merged.infinite) {
+  const infinite: unknown = merged.infinite;
+  if (infinite) {
     merged.infinite = {
       start: "start",
       size: "offset",
-      ...(merged.infinite === true ? {} : merged.infinite),
+      ...(infinite === true ? {} : (infinite as object)),
     };
   }
-  for (const key of ["include", "exclude"]) {
+  for (const key of ["include", "exclude"] as const) {
     merged.tags[key] = [merged.tags[key] ?? []].flat();
   }
   return merged;

@@ -8,7 +8,7 @@ import {
   oneLine,
   pascalCase,
   propertyName,
-} from "../src/names.mjs";
+} from "../dist/names.js";
 
 test("camelCase and pascalCase read separators", () => {
   assert.equal(camelCase("plate lists"), "plateLists");

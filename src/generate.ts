@@ -5,8 +5,8 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { emit } from "./emit.mjs";
-import { loadInput } from "./load/services.mjs";
+import { emit } from "./emit.js";
+import { loadInput } from "./load/services.js";
 import {
   CLIENT_TS,
   HOOKS_TS,
@@ -15,12 +15,27 @@ import {
   OPTION_TYPES_IMPORT,
   OPTION_TYPES_TS,
   TYPES_TS,
-} from "./runtime/templates.mjs";
+} from "./runtime/templates.js";
+import type { ForgeOptions, Problem, RunResult } from "./types.js";
+
+/** The parts of prettier this uses; it is an optional peer dependency. */
+interface Prettier {
+  resolveConfig(file: string): Promise<object | null>;
+  format(source: string, options: object): Promise<string>;
+}
+
+/** What a run is asked to do beyond its options. */
+export interface RunContext {
+  cwd: string;
+  check?: boolean;
+  forceRuntime?: boolean;
+  interactive?: boolean;
+}
 
 const TAG = "openapi-forge";
 
 /** The project's own prettier first, then the one next to this package. */
-async function loadPrettier(cwd) {
+async function loadPrettier(cwd: string): Promise<Prettier | null> {
   try {
     const found = createRequire(join(cwd, "noop.js")).resolve("prettier");
     return (await import(pathToFileURL(found).href)).default;
@@ -33,7 +48,10 @@ async function loadPrettier(cwd) {
   }
 }
 
-async function formatFiles(files, { cwd, outDir, format }) {
+async function formatFiles(
+  files: Map<string, string>,
+  { cwd, outDir, format }: { cwd: string; outDir: string; format: ForgeOptions["format"] },
+): Promise<Map<string, string>> {
   if (format === false) return files;
   const prettier = await loadPrettier(cwd);
   if (!prettier) {
@@ -57,7 +75,7 @@ async function formatFiles(files, { cwd, outDir, format }) {
         }),
       );
     } catch (error) {
-      const where = /\((\d+):(\d+)\)/.exec(String(error.message));
+      const where = /\((\d+):(\d+)\)/.exec(String((error as Error).message));
       throw new Error(
         `${TAG}: the emitted ${name} does not parse` +
           (where ? ` at line ${where[1]}, column ${where[2]}` : "") +
@@ -68,7 +86,7 @@ async function formatFiles(files, { cwd, outDir, format }) {
   return formatted;
 }
 
-async function exists(file) {
+async function exists(file: string): Promise<boolean> {
   try {
     await access(file);
     return true;
@@ -83,7 +101,7 @@ const SHOWN_PROBLEMS = 12;
  * What the document leaves incomplete. The output is still valid — those
  * spots are typed \`unknown\` — so this only tells the author where to look.
  */
-function reportProblems(problems, verbose) {
+function reportProblems(problems: Problem[], verbose: boolean): void {
   if (!problems.length) return;
   const shown = verbose ? problems : problems.slice(0, SHOWN_PROBLEMS);
   console.warn(
@@ -98,7 +116,7 @@ function reportProblems(problems, verbose) {
 }
 
 /** The built-in client's files — only the ones the target needs. */
-function runtimeFiles(options) {
+function runtimeFiles(options: ForgeOptions): Map<string, string> {
   const hooks = options.target === "hooks";
   const infinite = hooks && options.infinite;
   let types = TYPES_TS;
@@ -135,11 +153,10 @@ function runtimeFiles(options) {
   return files;
 }
 
-/**
- * @param {object} options  resolved options — see config.mjs
- * @param {{ cwd: string, check?: boolean, forceRuntime?: boolean, interactive?: boolean }} run
- */
-export async function generate(options, run) {
+export async function generate(
+  options: ForgeOptions,
+  run: RunContext,
+): Promise<RunResult> {
   const cwd = run.cwd;
   const outDir = resolve(cwd, options.out);
 

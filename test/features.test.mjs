@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { doctor } from "../src/doctor.mjs";
-import { emit } from "../src/emit.mjs";
-import { watchRun } from "../src/watch.mjs";
+import { doctor } from "../dist/doctor.js";
+import { emit } from "../dist/emit.js";
+import { watchRun } from "../dist/watch.js";
 import { options, petstore } from "./helpers.mjs";
 
 const paged = () => ({

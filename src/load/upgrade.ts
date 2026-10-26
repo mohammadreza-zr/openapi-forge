@@ -3,6 +3,8 @@
 // nullable type or a constant become their 3.0 equivalents. Both steps leave
 // a document that is already 3.0 as it was.
 
+import type { Loose, OpenApiDocument } from "../types.js";
+
 const FORM_TYPES = ["application/x-www-form-urlencoded", "multipart/form-data"];
 const SCHEMA_KEYS = [
   "type",
@@ -21,22 +23,22 @@ const SCHEMA_KEYS = [
   "multipleOf",
 ];
 
-const isObject = (value) =>
+const isObject = (value: unknown): value is Loose =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 // ── OpenAPI 3.1 → 3.0 spellings ───────────────────────────────────────────
 
-function normalizeSchema(node) {
+function normalizeSchema(node: Loose): void {
   if (Array.isArray(node)) return node.forEach(normalizeSchema);
   if (!isObject(node)) return;
 
   if (Array.isArray(node.type)) {
-    const types = node.type.filter((type) => type !== "null");
+    const types = node.type.filter((type: string) => type !== "null");
     if (types.length !== node.type.length) node.nullable = true;
     if (types.length === 1) node.type = types[0];
     else {
       delete node.type;
-      if (types.length) node.oneOf = types.map((type) => ({ type }));
+      if (types.length) node.oneOf = types.map((type: string) => ({ type }));
     }
   }
   if ("const" in node && !isObject(node.properties?.const)) {
@@ -65,7 +67,7 @@ const REF_PREFIXES = [
   ["#/responses/", "#/components/responses/"],
 ];
 
-function rewriteRefs(node) {
+function rewriteRefs(node: Loose): void {
   if (Array.isArray(node)) return node.forEach(rewriteRefs);
   if (!isObject(node)) return;
   for (const [key, value] of Object.entries(node)) {
@@ -76,7 +78,7 @@ function rewriteRefs(node) {
   }
 }
 
-function convertSchema(schema) {
+function convertSchema(schema: Loose): void {
   if (Array.isArray(schema)) return schema.forEach(convertSchema);
   if (!isObject(schema)) return;
   if (schema.type === "file") {
@@ -94,8 +96,8 @@ function convertSchema(schema) {
 }
 
 /** A parameter's own `type`, `items`, `enum` … as the `schema` of a 3.0 one. */
-function schemaOfParameter(parameter) {
-  const schema = {};
+function schemaOfParameter(parameter: Loose): Loose {
+  const schema: Loose = {};
   for (const key of SCHEMA_KEYS)
     if (key in parameter) schema[key] = parameter[key];
   if (schema.type === "file")
@@ -103,7 +105,7 @@ function schemaOfParameter(parameter) {
   return schema;
 }
 
-function convertParameter(parameter) {
+function convertParameter(parameter: Loose): Loose {
   const { name, in: where, required, description } = parameter;
   const out = { name, in: where, ...(description && { description }) };
   if (required !== undefined || where === "path")
@@ -114,7 +116,12 @@ function convertParameter(parameter) {
   return out;
 }
 
-function convertOperation(operation, doc, shared, resolve) {
+function convertOperation(
+  operation: Loose,
+  doc: Loose,
+  shared: Loose[],
+  resolve: (ref: string) => Loose,
+): Loose {
   const consumes = operation.consumes ?? doc.consumes ?? ["application/json"];
   const produces = operation.produces ?? doc.produces ?? ["application/json"];
   const parameters = [];
@@ -136,12 +143,12 @@ function convertOperation(operation, doc, shared, resolve) {
     next.requestBody = {
       required: body.required === true,
       content: Object.fromEntries(
-        consumes.map((type) => [type, { schema: body.schema }]),
+        consumes.map((type: string) => [type, { schema: body.schema }]),
       ),
     };
   } else if (form.length) {
     const type =
-      consumes.find((item) => FORM_TYPES.includes(item)) ?? FORM_TYPES[1];
+      consumes.find((item: string) => FORM_TYPES.includes(item)) ?? FORM_TYPES[1];
     next.requestBody = {
       required: form.some((item) => item.required),
       content: {
@@ -169,7 +176,7 @@ function convertOperation(operation, doc, shared, resolve) {
   return next;
 }
 
-function convertResponses(responses, produces) {
+function convertResponses(responses: Loose, produces: string[]): Loose {
   return Object.fromEntries(
     Object.entries(responses).map(([status, response]) => {
       if (!isObject(response) || response.$ref || !response.schema)
@@ -188,16 +195,16 @@ function convertResponses(responses, produces) {
   );
 }
 
-function swagger2ToOpenApi3(doc) {
+function swagger2ToOpenApi3(doc: Loose): Loose {
   const next = structuredClone(doc);
-  const resolve = (ref) =>
+  const resolve = (ref: string) =>
     String(ref)
       .replace(/^#\//, "")
       .split("/")
       .reduce((node, part) => node?.[part], next);
 
   const schemes = next.schemes ?? ["https"];
-  const out = {
+  const out: Loose = {
     openapi: "3.0.3",
     info: next.info,
     ...(next.host && {
@@ -208,7 +215,7 @@ function swagger2ToOpenApi3(doc) {
   };
   if (next.parameters)
     out.components.parameters = Object.fromEntries(
-      Object.entries(next.parameters)
+      Object.entries<Loose>(next.parameters)
         .filter(
           ([, parameter]) =>
             parameter.in !== "body" && parameter.in !== "formData",
@@ -222,10 +229,10 @@ function swagger2ToOpenApi3(doc) {
     );
   if (next.tags) out.tags = next.tags;
 
-  for (const [path, item] of Object.entries(next.paths ?? {})) {
+  for (const [path, item] of Object.entries<Loose>(next.paths ?? {})) {
     const shared = item.parameters ?? [];
-    const converted = {};
-    for (const [key, value] of Object.entries(item)) {
+    const converted: Loose = {};
+    for (const [key, value] of Object.entries<Loose>(item)) {
       if (key === "parameters") continue;
       converted[key] = [
         "get",
@@ -247,8 +254,8 @@ function swagger2ToOpenApi3(doc) {
 }
 
 /** The document in the dialect the emitter reads. Never mutates its argument. */
-export function upgradeDocument(doc) {
-  let next = doc;
+export function upgradeDocument(doc: OpenApiDocument): OpenApiDocument {
+  let next: Loose = doc;
   if (typeof doc?.swagger === "string" && doc.swagger.startsWith("2"))
     next = swagger2ToOpenApi3(doc);
   else if (typeof doc?.openapi === "string" && !doc.openapi.startsWith("3.0"))

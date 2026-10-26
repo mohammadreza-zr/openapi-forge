@@ -3,17 +3,54 @@
 // or response shapes moved, and which of those a caller of the generated
 // layer would feel. Every finding names the generated function and hook, so
 // a pulled spec turns into a to-do list instead of a wall of YAML.
-import { identifier, modelName, pascalCase } from "./names.mjs";
+import { identifier, modelName, pascalCase } from "./names.js";
+import type {
+  Finding,
+  HttpMethod,
+  OpenApiDocument,
+  OperationObject,
+  Parameter,
+  Schema,
+  Severity,
+} from "./types.js";
 
-const HTTP_METHODS = ["get", "put", "post", "patch", "delete"];
+const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "patch", "delete"];
+
+interface ParameterContract {
+  required: boolean;
+  type: string;
+}
+
+interface BodyContract {
+  required: boolean;
+  type: string;
+}
+
+interface OperationContract {
+  name: string;
+  tags: string[];
+  deprecated: boolean;
+  parameters: Map<string, ParameterContract>;
+  body: BodyContract | null;
+  response: string | null;
+}
+
+interface SchemaContract {
+  properties: Map<string, ParameterContract>;
+  shape: string | null;
+  enum: Set<string> | null;
+}
+
+/** Where a finding points: an operation or a schema. */
+type Subject = Pick<Finding, "operation" | "schema" | "name" | "hook">;
 
 /** How much a change matters to a consumer, most severe first. */
-export const SEVERITIES = ["breaking", "risky", "safe"];
+export const SEVERITIES: Severity[] = ["breaking", "risky", "safe"];
 
 // ── A document as a flat contract ─────────────────────────────────────────
 
 /** A short, comparable spelling of a schema: names stay names. */
-function typeText(schema) {
+function typeText(schema: Schema | boolean | undefined): string {
   if (!schema || typeof schema !== "object") return "unknown";
   if (schema.$ref) return modelName(schema.$ref);
   let text;
@@ -31,7 +68,7 @@ function typeText(schema) {
   } else if (schema.type === "object" || schema.properties) {
     const names = Object.keys(schema.properties ?? {}).sort();
     text = names.length
-      ? `{ ${names.map((name) => `${name}: ${typeText(schema.properties[name])}`).join("; ")} }`
+      ? `{ ${names.map((name) => `${name}: ${typeText(schema.properties?.[name])}`).join("; ")} }`
       : schema.additionalProperties
         ? `Record<string, ${typeText(schema.additionalProperties)}>`
         : "object";
@@ -44,16 +81,16 @@ function typeText(schema) {
   return schema.nullable === true ? `${text} | null` : text;
 }
 
-function derefParam(doc, parameter) {
+function derefParam(doc: OpenApiDocument, parameter: Parameter): Parameter {
   if (!parameter?.$ref) return parameter;
-  let node = doc;
+  let node: any = doc;
   for (const part of String(parameter.$ref).replace(/^#\//, "").split("/")) {
     node = node?.[part];
   }
   return node ?? parameter;
 }
 
-function bodyOf(operation) {
+function bodyOf(operation: OperationObject): BodyContract | null {
   const content = operation.requestBody?.content ?? {};
   const entry =
     content["application/json"] ??
@@ -66,7 +103,7 @@ function bodyOf(operation) {
   };
 }
 
-function responseOf(operation) {
+function responseOf(operation: OperationObject): string | null {
   const success = Object.entries(operation.responses ?? {}).find(([status]) =>
     /^2\d\d$/.test(status),
   )?.[1];
@@ -77,13 +114,16 @@ function responseOf(operation) {
 }
 
 /** `operations` and `schemas`, each reduced to what a consumer depends on. */
-export function contractOf(doc) {
-  const operations = new Map();
+export function contractOf(doc: OpenApiDocument): {
+  operations: Map<string, OperationContract>;
+  schemas: Map<string, SchemaContract>;
+} {
+  const operations = new Map<string, OperationContract>();
   for (const [path, item] of Object.entries(doc.paths ?? {})) {
     for (const method of HTTP_METHODS) {
       const operation = item?.[method];
       if (!operation) continue;
-      const parameters = new Map();
+      const parameters = new Map<string, ParameterContract>();
       for (const raw of [
         ...(item.parameters ?? []),
         ...(operation.parameters ?? []),
@@ -110,10 +150,10 @@ export function contractOf(doc) {
     }
   }
 
-  const schemas = new Map();
+  const schemas = new Map<string, SchemaContract>();
   for (const [name, schema] of Object.entries(doc.components?.schemas ?? {})) {
     const required = new Set(schema.required ?? []);
-    const properties = new Map(
+    const properties = new Map<string, ParameterContract>(
       Object.entries(schema.properties ?? {}).map(([key, value]) => [
         key,
         { required: required.has(key), type: typeText(value) },
@@ -133,17 +173,27 @@ export function contractOf(doc) {
 
 // ── Comparing two contracts ───────────────────────────────────────────────
 
-const hookNames = (operation) => {
+const hookNames = (operation: { name: string; method: string }): string => {
   const base = pascalCase(operation.name);
   return operation.method === "GET" ? `use${base}Query` : `use${base}Mutation`;
 };
 
-function finding(severity, kind, subject, message, extra = {}) {
+function finding(
+  severity: Severity,
+  kind: string,
+  subject: Subject,
+  message: string,
+  extra: Partial<Finding> = {},
+): Finding {
   return { severity, kind, ...subject, message, ...extra };
 }
 
-function diffParameters(before, after, at) {
-  const out = [];
+function diffParameters(
+  before: OperationContract,
+  after: OperationContract,
+  at: Subject,
+): Finding[] {
+  const out: Finding[] = [];
   for (const [key, next] of after.parameters) {
     const previous = before.parameters.get(key);
     const [where, name] = key.split(":");
@@ -195,20 +245,25 @@ function diffParameters(before, after, at) {
   return out;
 }
 
-function diffOperation(key, before, after) {
-  const at = { operation: key, name: after.name };
+function diffOperation(
+  key: string,
+  before: OperationContract,
+  after: OperationContract,
+): Finding[] {
+  const at: Subject = { operation: key, name: after.name };
   const out = diffParameters(before, after, at);
 
   if (JSON.stringify(before.body) !== JSON.stringify(after.body)) {
     if (!before.body) {
-      out.push(
-        finding(
-          after.body.required ? "breaking" : "safe",
-          "body-added",
-          at,
-          `request body added (${after.body.type})`,
-        ),
-      );
+      if (after.body)
+        out.push(
+          finding(
+            after.body.required ? "breaking" : "safe",
+            "body-added",
+            at,
+            `request body added (${after.body.type})`,
+          ),
+        );
     } else if (!after.body) {
       out.push(finding("breaking", "body-removed", at, "request body removed"));
     } else {
@@ -259,9 +314,13 @@ function diffOperation(key, before, after) {
   return out;
 }
 
-function diffSchema(name, before, after) {
-  const at = { schema: name };
-  const out = [];
+function diffSchema(
+  name: string,
+  before: SchemaContract,
+  after: SchemaContract,
+): Finding[] {
+  const at: Subject = { schema: name };
+  const out: Finding[] = [];
   for (const [key, next] of after.properties) {
     const previous = before.properties.get(key);
     if (!previous) {
@@ -337,10 +396,13 @@ function diffSchema(name, before, after) {
 }
 
 /** Every finding between two parsed documents, most severe first. */
-export function diffDocuments(oldDoc, newDoc) {
+export function diffDocuments(
+  oldDoc: OpenApiDocument,
+  newDoc: OpenApiDocument,
+): Finding[] {
   const before = contractOf(oldDoc);
   const after = contractOf(newDoc);
-  const findings = [];
+  const findings: Finding[] = [];
 
   for (const [key, operation] of after.operations) {
     const method = key.split(" ")[0];
@@ -394,36 +456,36 @@ export function diffDocuments(oldDoc, newDoc) {
 
 // ── Reports ───────────────────────────────────────────────────────────────
 
-export function summarize(findings) {
-  const counts = { breaking: 0, risky: 0, safe: 0 };
+export function summarize(findings: Finding[]): Record<Severity, number> {
+  const counts: Record<Severity, number> = { breaking: 0, risky: 0, safe: 0 };
   for (const item of findings) counts[item.severity] += 1;
   return counts;
 }
 
-const subjectOf = (item) =>
+const subjectOf = (item: Finding): string =>
   item.operation
     ? `${item.operation}${item.name ? ` (${item.name}${item.hook ? ` · ${item.hook}` : ""})` : ""}`
     : `schema ${item.schema}`;
 
 /** Group findings by what they are about, so one operation reads as one block. */
-function grouped(findings) {
-  const groups = new Map();
+function grouped(findings: Finding[]): Map<string, Finding[]> {
+  const groups = new Map<string, Finding[]>();
   for (const item of findings) {
     const key = subjectOf(item);
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(item);
+    groups.get(key)!.push(item);
   }
   return groups;
 }
 
-const MARK = { breaking: "✖", risky: "▲", safe: "+" };
+const MARK: Record<Severity, string> = { breaking: "✖", risky: "▲", safe: "+" };
 
 /** `text` for the terminal, `markdown` for a PR comment, `json` for tooling. */
 export function renderReport(
-  findings,
-  format = "text",
-  { title = "API changes" } = {},
-) {
+  findings: Finding[],
+  format: "text" | "markdown" | "json" = "text",
+  { title = "API changes" }: { title?: string } = {},
+): string {
   if (format === "json")
     return `${JSON.stringify({ summary: summarize(findings), findings }, null, 2)}\n`;
 
@@ -460,7 +522,7 @@ export function renderReport(
 }
 
 /** Whether a run should fail: any finding at or above `threshold`. */
-export function exceeds(findings, threshold) {
+export function exceeds(findings: Finding[], threshold?: Severity): boolean {
   if (!threshold) return false;
   const limit = SEVERITIES.indexOf(threshold);
   return findings.some((item) => SEVERITIES.indexOf(item.severity) <= limit);

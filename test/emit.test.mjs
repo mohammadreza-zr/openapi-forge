@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { emit } from "../src/emit.mjs";
+import { emit } from "../dist/emit.js";
 import { options, petstore } from "./helpers.mjs";
 
 const run = (patch) => emit(petstore(), options(patch), "petstore.yaml");

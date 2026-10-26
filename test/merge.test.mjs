@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { mergeSpecs } from "../src/load/merge.mjs";
+import { mergeSpecs } from "../dist/load/merge.js";
 
 const doc = (paths, schemas = {}) => ({
   openapi: "3.0.3",

@@ -8,7 +8,7 @@ import { test } from "node:test";
 
 import { FIXTURE } from "./helpers.mjs";
 
-const BIN = fileURLToPath(new URL("../bin/openapi-forge.mjs", import.meta.url));
+const BIN = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
 async function project() {
   const dir = await mkdtemp(join(tmpdir(), "forge-"));

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { emit } from "../src/emit.mjs";
-import { upgradeDocument } from "../src/load/upgrade.mjs";
+import { emit } from "../dist/emit.js";
+import { upgradeDocument } from "../dist/load/upgrade.js";
 import { options } from "./helpers.mjs";
 
 const swagger = () => ({

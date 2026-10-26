@@ -8,14 +8,32 @@ import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
-import { mergeSpecs } from "./merge.mjs";
-import { isUrl, parseDocument, readDocument } from "./source.mjs";
+import type {
+  ForgeOptions,
+  Input,
+  Loose,
+  MergeReport,
+  OpenApiDocument,
+  Service,
+} from "../types.js";
+import { mergeSpecs } from "./merge.js";
+import { isUrl, parseDocument, readDocument } from "./source.js";
 
 const SPEC_FILE = /\.(ya?ml|json)$/;
 const TAG = "openapi-forge";
 
+/** The choices kept in the decisions file. */
+interface Decisions {
+  main?: string;
+  owners: Record<string, string>;
+}
+
+type Readline = ReturnType<typeof createInterface>;
+
 /** The documents of a folder, named after their files. */
-export async function readSpecDir(dir) {
+export async function readSpecDir(
+  dir: string,
+): Promise<(Service & { file: string })[]> {
   const files = (await readdir(dir)).filter((file) => SPEC_FILE.test(file));
   return Promise.all(
     files.sort().map(async (file) => ({
@@ -27,7 +45,14 @@ export async function readSpecDir(dir) {
 }
 
 /** What `input` holds: one document, or the services to merge. */
-export async function classifyInput(input, cwd) {
+export async function classifyInput(
+  input: Input,
+  cwd: string,
+): Promise<
+  | { kind: "services"; entries: [string, string][] }
+  | { kind: "document"; location: string }
+  | { kind: "dir"; path: string }
+> {
   if (input && typeof input === "object") {
     return { kind: "services", entries: Object.entries(input) };
   }
@@ -44,13 +69,13 @@ export async function classifyInput(input, cwd) {
     : { kind: "document", location: input };
 }
 
-async function readDecisions(file) {
+async function readDecisions(file: string): Promise<Decisions> {
   const text = await readFile(file, "utf8").catch(() => null);
   const config = text ? JSON.parse(text) : {};
   return { main: config.main, owners: config.owners ?? {} };
 }
 
-async function writeDecisions(file, config) {
+async function writeDecisions(file: string, config: Decisions): Promise<void> {
   const owners = Object.fromEntries(
     Object.entries(config.owners).sort(([a], [b]) => a.localeCompare(b)),
   );
@@ -62,13 +87,13 @@ async function writeDecisions(file, config) {
 }
 
 /** Main service first, the rest by name: the merge's priority order. */
-export function orderServices(specs, main) {
+export function orderServices(specs: Service[], main?: string): Service[] {
   return [...specs].sort((a, b) =>
     a.name === main ? -1 : b.name === main ? 1 : a.name.localeCompare(b.name),
   );
 }
 
-function differingFields(copies) {
+function differingFields(copies: Loose[]): string[] {
   const fields = new Set(copies.flatMap((copy) => Object.keys(copy ?? {})));
   return [...fields].filter(
     (field) =>
@@ -76,7 +101,7 @@ function differingFields(copies) {
   );
 }
 
-function copyOf(spec, key) {
+function copyOf(spec: Service, key: string): Loose {
   if (key.startsWith("#/")) {
     const [, , section, name] = key.split("/");
     return spec.doc.components?.[section]?.[name];
@@ -86,8 +111,12 @@ function copyOf(spec, key) {
 }
 
 /** The open questions as plain text, for a run that cannot ask them. */
-export function pendingDecisions(specs, config, undecided) {
-  const pending = [];
+export function pendingDecisions(
+  specs: Service[],
+  config: Decisions,
+  undecided: MergeReport["undecided"],
+): string[] {
+  const pending: string[] = [];
   if (!config.main || !specs.some(({ name }) => name === config.main)) {
     pending.push(
       `the main service (one of ${specs.map(({ name }) => name).join(", ")})`,
@@ -99,7 +128,11 @@ export function pendingDecisions(specs, config, undecided) {
   return pending;
 }
 
-async function choose(rl, question, options) {
+async function choose(
+  rl: Readline,
+  question: string,
+  options: string[],
+): Promise<string> {
   const listing = options
     .map((option, i) => `    ${i + 1}) ${option}`)
     .join("\n");
@@ -110,7 +143,7 @@ async function choose(rl, question, options) {
   }
 }
 
-async function askMainService(specs, config) {
+async function askMainService(specs: Service[], config: Decisions): Promise<Decisions> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     config.main = await choose(
@@ -124,13 +157,17 @@ async function askMainService(specs, config) {
   }
 }
 
-async function askOwners(specs, config, undecided) {
+async function askOwners(
+  specs: Service[],
+  config: Decisions,
+  undecided: MergeReport["undecided"],
+): Promise<Decisions> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     for (const { key, services } of undecided) {
       const copies = services.map((name) =>
         copyOf(
-          specs.find((spec) => spec.name === name),
+          specs.find((spec) => spec.name === name)!,
           key,
         ),
       );
@@ -149,10 +186,16 @@ async function askOwners(specs, config, undecided) {
   }
 }
 
-function printReport(services, report, config, verbose, decisionsFile) {
-  const count = (items, isComponent) =>
+function printReport(
+  services: Service[],
+  report: MergeReport,
+  config: Decisions,
+  verbose: boolean | undefined,
+  decisionsFile: string,
+): void {
+  const count = (items: { key: string }[], isComponent: boolean): number =>
     items.filter(({ key }) => key.startsWith("#/") === isComponent).length;
-  const summary = (items) =>
+  const summary = (items: { key: string }[]): string =>
     `${count(items, false)} operations, ${count(items, true)} components`;
   const sizes = services.map(
     ({ name, doc }) =>
@@ -178,10 +221,12 @@ function printReport(services, report, config, verbose, decisionsFile) {
       lines.push(`      ${key} → ${owner} (also in ${others.join(", ")})`);
     }
   }
-  const crossRefs = Map.groupBy(
-    report.crossRefs,
-    ({ ref, owner, service }) => `${ref} → ${owner}, used by ${service}`,
-  );
+  // Not `Map.groupBy`: it needs Node 21, and this package supports 20.
+  const crossRefs = new Map<string, MergeReport["crossRefs"]>();
+  for (const use of report.crossRefs) {
+    const label = `${use.ref} → ${use.owner}, used by ${use.service}`;
+    crossRefs.set(label, [...(crossRefs.get(label) ?? []), use]);
+  }
   for (const [label, uses] of crossRefs) {
     lines.push(`  note: ${label} in ${uses.length} operations`);
     if (verbose) {
@@ -202,7 +247,14 @@ function printReport(services, report, config, verbose, decisionsFile) {
  * undecided when `interactive`, and failing with the list of open questions
  * when it is not. A single service needs no merge and no questions.
  */
-export async function loadMergedSpec(specs, { decisionsFile, interactive, verbose }) {
+export async function loadMergedSpec(
+  specs: Service[],
+  {
+    decisionsFile,
+    interactive,
+    verbose,
+  }: { decisionsFile: string; interactive: boolean; verbose?: boolean },
+): Promise<{ doc: OpenApiDocument }> {
   if (specs.length === 1) return { doc: specs[0].doc };
 
   const config = await readDecisions(decisionsFile);
@@ -239,7 +291,10 @@ export async function loadMergedSpec(specs, { decisionsFile, interactive, verbos
  * is taken as it is, a folder or a `{ name: location }` map is a set of
  * services and is merged.
  */
-export async function loadInput(options, { cwd, interactive }) {
+export async function loadInput(
+  options: ForgeOptions,
+  { cwd, interactive }: { cwd: string; interactive: boolean },
+): Promise<{ doc: OpenApiDocument; source: string; merged?: boolean }> {
   const found = await classifyInput(options.input, cwd);
   const read = { headers: options.headers, tls: options.tls, cwd };
 

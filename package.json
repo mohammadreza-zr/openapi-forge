@@ -13,20 +13,19 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "openapi-forge": "./bin/openapi-forge.mjs"
+    "openapi-forge": "./dist/cli.js"
   },
-  "main": "./src/index.mjs",
-  "types": "./src/index.d.mts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.d.mts",
-      "default": "./src/index.mjs"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
-    "bin",
-    "src",
+    "dist",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -35,8 +34,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test \"test/*.test.mjs\"",
-    "conformance": "node scripts/conformance.mjs"
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "npm run build && node --test \"test/*.test.mjs\"",
+    "conformance": "npm run build && node scripts/conformance.mjs",
+    "prepublishOnly": "npm test && npm run conformance"
   },
   "dependencies": {
     "yaml": "^2.9.0"
@@ -55,6 +57,7 @@
   "devDependencies": {
     "@readme/oas-examples": "^8.2.2",
     "@tanstack/react-query": "^5.105.0",
+    "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "prettier": "^3.9.10",
     "react": "^19.3.1",

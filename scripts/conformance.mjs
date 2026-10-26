@@ -7,8 +7,8 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveOptions } from "../src/config.mjs";
-import { generate } from "../src/generate.mjs";
+import { resolveOptions } from "../dist/config.js";
+import { generate } from "../dist/generate.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const corpus = dirname(

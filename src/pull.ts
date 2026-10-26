@@ -5,15 +5,16 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { fetchText } from "./load/source.mjs";
-import { diffDocuments, renderReport } from "./diff.mjs";
+import { fetchText } from "./load/source.js";
+import { diffDocuments, renderReport } from "./diff.js";
+import type { ForgeOptions } from "./types.js";
 
 const TAG = "openapi-forge";
 const SERVICE_NAME = /^[a-z0-9][a-z0-9-]*$/i;
 
 /** `name=url;name2=url2` — the form an environment variable carries. */
-export function parseSourcePairs(text) {
-  const out = {};
+export function parseSourcePairs(text: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const pair of String(text ?? "").split(";")) {
     const trimmed = pair.trim();
     if (!trimmed) continue;
@@ -30,7 +31,10 @@ export function parseSourcePairs(text) {
   return out;
 }
 
-export async function pull(options, { cwd }) {
+export async function pull(
+  options: ForgeOptions,
+  { cwd }: { cwd: string },
+): Promise<string[]> {
   const sources = Object.entries(options.sources ?? {});
   if (!sources.length) {
     throw new Error(

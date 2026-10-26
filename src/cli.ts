@@ -3,13 +3,19 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 
-import { loadConfigFile, resolveOptions } from "../src/config.mjs";
-import { generate } from "../src/generate.mjs";
-import { doctor, renderChecks } from "../src/doctor.mjs";
-import { watchRun } from "../src/watch.mjs";
-import { diffDocuments, exceeds, renderReport } from "../src/diff.mjs";
-import { readDocument } from "../src/load/source.mjs";
-import { parseSourcePairs, pull } from "../src/pull.mjs";
+import { loadConfigFile, resolveOptions } from "./config.js";
+import { generate } from "./generate.js";
+import { doctor, renderChecks } from "./doctor.js";
+import { watchRun } from "./watch.js";
+import type { ForgeConfig } from "./types.js";
+import {
+  SEVERITIES,
+  diffDocuments,
+  exceeds,
+  renderReport,
+} from "./diff.js";
+import { readDocument } from "./load/source.js";
+import { parseSourcePairs, pull } from "./pull.js";
 
 const HELP = `openapi-forge — a typed API layer from OpenAPI / Swagger documents
 
@@ -74,59 +80,81 @@ export default defineConfig({
 });
 `;
 
+const COMMANDS = ["generate", "pull", "diff", "doctor", "init"] as const;
+type Command = (typeof COMMANDS)[number];
+
 const args = process.argv.slice(2);
-const command = ["generate", "pull", "diff", "doctor", "init"].includes(args[0])
-  ? args.shift()
+const command: Command = COMMANDS.includes(args[0] as Command)
+  ? (args.shift() as Command)
   : "generate";
 
-let values;
-let positionals;
-try {
-  ({ values, positionals } = parseArgs({
-    args,
-    allowPositionals: true,
-    options: {
-      format: { type: "string" },
-      "fail-on": { type: "string" },
-      watch: { type: "boolean" },
-      zod: { type: "boolean" },
-      infinite: { type: "boolean" },
-      interval: { type: "string" },
-      config: { type: "string" },
-      input: { type: "string" },
-      out: { type: "string" },
-      "api-prefix": { type: "string" },
-      tags: { type: "string" },
-      "exclude-tags": { type: "string" },
-      target: { type: "string" },
-      client: { type: "string" },
-      headers: { type: "string" },
-      insecure: { type: "boolean" },
-      ca: { type: "string" },
-      check: { type: "boolean" },
-      raw: { type: "boolean" },
-      "force-runtime": { type: "boolean" },
-      "no-pull": { type: "boolean" },
-      verbose: { type: "boolean" },
-      help: { type: "boolean", short: "h" },
-      version: { type: "boolean", short: "v" },
-    },
-  }));
-} catch (error) {
-  console.error(`openapi-forge: ${error.message}\n\n${HELP}`);
-  process.exit(2);
+function parseCommandLine() {
+  try {
+    return parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        format: { type: "string" },
+        "fail-on": { type: "string" },
+        watch: { type: "boolean" },
+        zod: { type: "boolean" },
+        infinite: { type: "boolean" },
+        interval: { type: "string" },
+        config: { type: "string" },
+        input: { type: "string" },
+        out: { type: "string" },
+        "api-prefix": { type: "string" },
+        tags: { type: "string" },
+        "exclude-tags": { type: "string" },
+        target: { type: "string" },
+        client: { type: "string" },
+        headers: { type: "string" },
+        insecure: { type: "boolean" },
+        ca: { type: "string" },
+        check: { type: "boolean" },
+        raw: { type: "boolean" },
+        "force-runtime": { type: "boolean" },
+        "no-pull": { type: "boolean" },
+        verbose: { type: "boolean" },
+        help: { type: "boolean", short: "h" },
+        version: { type: "boolean", short: "v" },
+      },
+    });
+  } catch (error) {
+    console.error(`openapi-forge: ${(error as Error).message}\n\n${HELP}`);
+    return process.exit(2);
+  }
 }
 
-const list = (text) =>
+const { values, positionals } = parseCommandLine();
+
+/** A flag that takes one of a fixed set of words. */
+function choice<T extends string>(
+  flag: string,
+  value: string | undefined,
+  allowed: readonly T[],
+): T | undefined {
+  if (value === undefined) return undefined;
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new Error(
+      `openapi-forge: --${flag} must be one of ${allowed.join(", ")}, not ${JSON.stringify(value)}.`,
+    );
+  }
+  return value as T;
+}
+
+const list = (text: unknown): string[] =>
   String(text ?? "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
 
-function parseHeaders(text) {
+function parseHeaders(
+  text: string | undefined,
+): Record<string, string> | undefined {
   if (!text) return undefined;
   return Object.fromEntries(
-    text.split(";").map((pair) => {
+    text.split(";").map((pair): [string, string] => {
       const [key, ...rest] = pair.split(":");
       return [key.trim(), rest.join(":").trim()];
     }),
@@ -163,8 +191,14 @@ async function main() {
       ),
     );
     const findings = diffDocuments(oldDoc, newDoc);
-    process.stdout.write(renderReport(findings, values.format ?? "text"));
-    if (exceeds(findings, values["fail-on"])) process.exitCode = 1;
+    process.stdout.write(
+      renderReport(
+        findings,
+        choice("format", values.format, ["text", "markdown", "json"]) ?? "text",
+      ),
+    );
+    if (exceeds(findings, choice("fail-on", values["fail-on"], SEVERITIES)))
+      process.exitCode = 1;
     return;
   }
 
@@ -182,13 +216,15 @@ async function main() {
 
   const { config, file: configFile } = await loadConfigFile(cwd, values.config);
   const env = process.env;
-  const cli = {};
+  const cli: ForgeConfig = {};
   const input = values.input ?? env.OPENAPI_FORGE_INPUT;
   if (input) cli.input = input;
   if (values.out) cli.out = values.out;
   if (values["api-prefix"] !== undefined) cli.apiPrefix = values["api-prefix"];
-  if (values.target) cli.target = values.target;
-  if (values.client) cli.client = values.client;
+  if (values.target)
+    cli.target = choice("target", values.target, ["hooks", "requests"]);
+  if (values.client)
+    cli.client = choice("client", values.client, ["builtin", "custom"]);
   if (values.tags || values["exclude-tags"]) {
     cli.tags = {};
     if (values.tags) cli.tags.include = list(values.tags);
