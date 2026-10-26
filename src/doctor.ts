@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
 import { loadInput } from "./load/services.js";
+import { httpPackages } from "./runtime/client.js";
 import { LIBRARIES } from "./runtime/libraries/index.js";
 import type {
   Check,
@@ -100,7 +101,7 @@ async function checkDependencies(
     ...(options.target === "hooks" && builtin
       ? LIBRARIES[options.library].packages
       : []),
-    ...(builtin && options.http === "axios" ? ["axios"] : []),
+    ...(builtin ? httpPackages(options.http) : []),
     ...(options.zod ? ["zod"] : []),
   ];
   const results = needs.map((name) =>

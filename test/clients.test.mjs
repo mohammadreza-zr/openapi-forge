@@ -9,6 +9,7 @@ import { diffDocuments } from "../dist/diff.js";
 import { doctor } from "../dist/doctor.js";
 import { emit } from "../dist/emit.js";
 import { runtimeFiles } from "../dist/runtime/index.js";
+import { HTTP_CLIENTS } from "../dist/runtime/client.js";
 import { LIBRARIES, LIBRARY_NAMES } from "../dist/runtime/libraries/index.js";
 import { clients, options } from "./helpers.mjs";
 
@@ -196,16 +197,45 @@ test("http picks what the built-in client sends with", () => {
   assert.doesNotMatch(axiosClient, /await fetch\(/);
 });
 
-test("both clients build the request and read the answer the same way", () => {
-  const body = (text) =>
-    text.slice(
-      text.indexOf("function buildUrl"),
-      text.indexOf("async function send"),
-    ) + text.slice(text.indexOf("async function request"));
-  assert.equal(
-    body(runtimeFiles(resolveOptions()).get("client.ts")),
-    body(runtimeFiles(resolveOptions({ http: "axios" })).get("client.ts")),
+test("every client builds the request and judges the answer the same way", () => {
+  // Everything but the transport's own functions: before them, and `request`.
+  const shared = (text) => {
+    const own = ["function readBody", "async function send"]
+      .map((marker) => text.indexOf(marker))
+      .filter((at) => at !== -1);
+    return (
+      text.slice(text.indexOf("function buildUrl"), Math.min(...own)) +
+      text.slice(text.indexOf("async function request"))
+    );
+  };
+  const clientOf = (http) =>
+    runtimeFiles(resolveOptions({ http })).get("client.ts");
+  for (const http of HTTP_CLIENTS)
+    assert.equal(shared(clientOf(http)), shared(clientOf("fetch")), http);
+});
+
+test("the angular client sends through the HttpClient it is given", () => {
+  const client = runtimeFiles(resolveOptions({ http: "angular" })).get(
+    "client.ts",
   );
+  assert.match(
+    client,
+    /import \{ HttpClient, HttpErrorResponse \} from "@angular\/common\/http"/,
+  );
+  assert.match(client, /instance\?: HttpClient/);
+  assert.match(
+    client,
+    /configureClient\(\{ instance: inject\(HttpClient\) \}\)/,
+  );
+  assert.doesNotMatch(client, /await fetch\(|axios/);
+});
+
+test("only the clients that read a body as text define how", () => {
+  const readsBody = (http) =>
+    runtimeFiles(resolveOptions({ http }))
+      .get("client.ts")
+      .includes("function readBody");
+  assert.deepEqual(HTTP_CLIENTS.filter(readsBody), ["fetch", "angular"]);
 });
 
 test("an unknown library or http client is named", () => {
@@ -215,7 +245,7 @@ test("an unknown library or http client is named", () => {
   );
   assert.throws(
     () => resolveOptions({ http: "ky" }),
-    /http must be "fetch" or "axios"/,
+    /http must be one of fetch, axios, angular/,
   );
 });
 
@@ -259,4 +289,14 @@ test("doctor looks for the library's packages and the transport's", async () => 
   assert.ok(
     !failed.some((message) => message.includes("@tanstack/react-query")),
   );
+
+  const angular = await doctor(
+    resolveOptions({ http: "angular", target: "requests", input: "x.json" }),
+    { cwd: dir },
+  );
+  const missing = angular
+    .filter((item) => item.level === "fail")
+    .map((item) => item.message);
+  assert.ok(missing.some((message) => message.includes("@angular/common")));
+  assert.ok(missing.some((message) => message.includes("rxjs")));
 });

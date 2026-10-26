@@ -7,7 +7,7 @@ Generate a typed TypeScript API layer from OpenAPI / Swagger documents:
 - **route + query-key factories** — each URL is written once; keys point at it
 - **hooks for the library you use** — React, Vue, Svelte, Solid or Angular Query, or SWR: a query hook per read, a mutation hook per write (optional)
 - **several services, one layer** — merge many documents; conflicts are decided once and committed
-- **a runtime of its own, or yours** — a small `fetch` or axios client is written for you, or the code imports your transport
+- **a runtime of its own, or yours** — a small `fetch`, axios or Angular `HttpClient` client is written for you, or the code imports your transport
 
 Output is deterministic and prettier-formatted, so `--check` can fail CI when the committed layer is stale.
 
@@ -44,7 +44,7 @@ Two independent choices. `library` is what the hooks wrap; `http` is what the bu
 ```js
 export default defineConfig({
   library: "vue-query",   // see the table
-  http: "axios",          // "fetch" (default) | "axios"
+  http: "axios",          // "fetch" (default) | "axios" | "angular"
   target: "hooks",        // "requests" stops at plain request functions
 });
 ```
@@ -68,15 +68,22 @@ const pet = createGetPetQuery(() => id()); // Solid / Svelte / Angular: a getter
 
 A path id that is still `undefined` makes the query wait instead of asking for `/pets/undefined`. Mutations take their variables when `mutate` is called, so they are the same in every library.
 
-Coming from Orval, its `client` values map like this: `react-query`, `vue-query`, `svelte-query`, `solid-query`, `angular-query` and `swr` are the `library` values above; `fetch` and `axios` are `target: "requests"` with `http: "fetch"` or `"axios"`; `zod` is `zod: true`. Not covered: Angular `HttpClient` services, `hono`, `mcp`, MSW / Faker mocks, and Suspense variants of the hooks.
+| `http` | sends with | needs |
+| --- | --- | --- |
+| `fetch` (default) | the platform's `fetch` | nothing |
+| `axios` | an axios instance, `configureClient({ instance })` | `axios` |
+| `angular` | Angular's `HttpClient`, so its interceptors apply; `configureClient({ instance: inject(HttpClient) })` at start-up | `@angular/common`, `rxjs` |
+
+Coming from Orval, its `client` values map like this: `react-query`, `vue-query`, `svelte-query`, `solid-query`, `angular-query` and `swr` are the `library` values above; `fetch`, `axios` and `angular` are `http` values (with `target: "requests"` for plain functions); `zod` is `zod: true`.
+
+Left out on purpose: `hono` and `mcp` generate server handlers and tools, not a client; MSW / Faker mocks do not belong in a data layer (and a project that forbids mocks cannot use them); Suspense variants would double every hook. The `angular` client is promise-based over `HttpClient`, not the Observable-returning services Orval writes — with `angular-query` on top it covers an Angular application, and the interceptors keep working.
 
 Notes that follow from what each library offers:
 
 - **SWR** cannot cancel a request, so the `signal` a fetcher gets never fires; an infinite list asks for page `n` at `n * pageSize`.
 - **Solid**: the hook options leave out `initialData` — `createQuery` has one overload for options that set it and one for options that do not, and options that may do either match neither.
-- **Svelte**: a mutation's requests are not aborted when the component goes (Svelte has no way to ask whether there is a component to clean up with).
 - **Angular**: `inject…` functions need an injection context — a constructor, a field initialiser, a service, `runInInjectionContext`.
-- **axios**: the instance is `configureClient({ instance })`; interceptors and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so the two behave alike.
+- **axios** and **angular**: the instance is `configureClient({ instance })`; interceptors and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so the three behave alike.
 
 ## Commands
 
@@ -89,7 +96,7 @@ Notes that follow from what each library offers:
 | `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
 
 Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
-`--target hooks|requests`, `--library <name>`, `--http fetch|axios`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
+`--target hooks|requests`, `--library <name>`, `--http fetch|axios|angular`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
 `--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`, `--watch`, `--interval <s>`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`.
 Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`,
 `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
@@ -109,7 +116,7 @@ export default defineConfig({
   client: "builtin",              // "builtin" | "custom"
   target: "hooks",                // "hooks" | "requests"
   library: "react-query",         // "vue-query" | "svelte-query" | "solid-query" | "angular-query" | "swr"
-  http: "fetch",                  // "axios" — for the built-in runtime
+  http: "fetch",                  // "axios" | "angular" — for the built-in runtime
   tags: { include: [], exclude: [] },
   headers: { Authorization: "Bearer …" },   // for a URL input
   tls: { insecure: false, ca: "internal-ca.pem" },
@@ -176,9 +183,9 @@ What a document leaves out never breaks the output: that spot is typed `unknown`
 
 ## Tested against real documents
 
-`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 7 clients × 61 documents pass.
+`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 8 clients × 61 documents pass.
 
-The behaviour is run too, not only compiled (`npm test`): the `fetch` and axios clients are called against a local HTTP server (query strings, path encoding, JSON and multipart bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort); the React Query, SWR, Vue Query and Solid Query hooks are executed against the same kind of server — data arrives, a changed argument or ref moves the query, a missing id waits, a mutation sends its variables, an infinite list pages. Svelte Query and Angular Query output is type-checked only: their packages need a Svelte compiler and an Angular test bed that are not wired in here.
+The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios and Angular `HttpClient` clients are called against a local HTTP server (query strings, path encoding, JSON and multipart bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort — and an interceptor, for Angular). Every hook library is executed against the same kind of server: React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument (ref, signal, getter, state) moves the query, a missing id waits, a mutation sends its variables, and tearing down the owner aborts a mutation still in flight; React Query, SWR and Vue Query also page an infinite list.
 
 ## How it compares
 

@@ -67,7 +67,13 @@ async function main() {
 
   const created = await mutation.mutateAsync({ body: { name: "Rex" } });
   assert.deepEqual(created, { id: "new", name: "Rex" });
+
+  // Disposing the owner aborts a request still in flight.
+  const pending = mutation.mutateAsync({ body: { name: "slow" } });
+  const settled = assert.rejects(pending, /abort/i);
+  await new Promise((resolve) => setTimeout(resolve, 50));
   dispose();
+  await settled;
   client.clear();
   console.log("solid ok");
 }

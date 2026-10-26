@@ -14,7 +14,8 @@
     "solid-query",
     "angular-query",
     "swr",
-    "axios"
+    "axios",
+    "angular"
   ],
   "license": "MIT",
   "type": "module",
@@ -62,7 +63,9 @@
   },
   "devDependencies": {
     "@angular/common": "^22.2.3",
+    "@angular/compiler": "^22.2.3",
     "@angular/core": "^22.2.3",
+    "@angular/platform-browser": "^22.2.3",
     "@readme/oas-examples": "^8.2.2",
     "@tanstack/angular-query-experimental": "^5.105.0",
     "@tanstack/react-query": "^5.105.0",
@@ -73,6 +76,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "axios": "^1.20.0",
+    "esbuild": "^0.28.2",
     "jsdom": "^30.1.3",
     "prettier": "^3.9.10",
     "react": "^19.3.1",

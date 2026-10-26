@@ -1,0 +1,94 @@
+// What the runtime tests share: generating the clients fixture for one client,
+// and turning the result into something Node can run — compiled to CommonJS
+// with tsc, or bundled with esbuild when a library needs a bundler.
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { generate } from "../dist/generate.js";
+import { CLIENTS_FIXTURE, options } from "./helpers.mjs";
+
+export const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Polls `check` until it holds; `what` names it in the failure. */
+export async function until(check, what, { tick = sleep, within = 3000 } = {}) {
+  for (let waited = 0; waited < within; waited += 10) {
+    if (await check()) return;
+    await tick(10);
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+/** Generates the clients fixture into `.conformance/runtime/<name>/ts`. */
+export async function generateTo(name, patch = {}) {
+  const dir = join(root, ".conformance", "runtime", name);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const { log, warn } = console;
+  console.log = console.warn = () => {};
+  try {
+    await generate(
+      options({ input: CLIENTS_FIXTURE, out: join(dir, "ts"), ...patch }),
+      { cwd: root },
+    );
+  } finally {
+    Object.assign(console, { log, warn });
+  }
+  return dir;
+}
+
+/** Compiles `<dir>/ts` to CommonJS in `<dir>/js`; the package is ESM, so say so. */
+export function compileCjs(dir, extra = []) {
+  const source = join(dir, "ts");
+  execFileSync(
+    join(root, "node_modules/.bin/tsc"),
+    [
+      "--ignoreConfig",
+      "--strict",
+      "--skipLibCheck",
+      "--target",
+      "es2022",
+      "--module",
+      "commonjs",
+      "--lib",
+      "es2023,dom",
+      "--outDir",
+      join(dir, "js"),
+      ...extra,
+      ...readdirSync(source)
+        .filter((name) => name.endsWith(".ts"))
+        .map((name) => join(source, name)),
+    ],
+    { stdio: "pipe" },
+  );
+  writeFileSync(join(dir, "js/package.json"), '{ "type": "commonjs" }');
+  return join(dir, "js");
+}
+
+/**
+ * Bundles a probe that imports the generated layer as `@api/…` into one ES
+ * module, and returns its path. `jsdom` stays outside the bundle.
+ */
+export async function bundle(dir, entry, esbuildOptions = {}) {
+  const { build } = await import("esbuild");
+  const outfile = join(dir, "bundle.mjs");
+  await build({
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    logLevel: "silent",
+    alias: { "@api": join(dir, "ts") },
+    external: ["jsdom"],
+    banner: {
+      // Some dependencies are CommonJS and call require.
+      js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);',
+    },
+    ...esbuildOptions,
+  });
+  return outfile;
+}

@@ -27,10 +27,11 @@ const quiet = (fn) => {
   return fn().finally(() => Object.assign(console, { log, warn }));
 };
 
-/** Every client: each library on `fetch`, and the one other HTTP client. */
+/** Every client: each library on `fetch`, and each other HTTP client once. */
 const variants = [
   ...LIBRARY_NAMES.map((library) => ({ library, http: "fetch" })),
   { library: "react-query", http: "axios" },
+  { library: "angular-query", http: "angular" },
 ].filter((variant) => !only || variant.library === only);
 
 const documents = [

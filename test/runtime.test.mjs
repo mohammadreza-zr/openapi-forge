@@ -1,104 +1,23 @@
 // The built-in clients, run for real: the generated request functions are
 // compiled and called against a local HTTP server, once per HTTP client.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { createServer } from "node:http";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 
-import { generate } from "../dist/generate.js";
-import { CLIENTS_FIXTURE, options } from "./helpers.mjs";
+import { compileCjs, generateTo } from "./harness.mjs";
+import { ok, serve } from "./server.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const quiet = async (fn) => {
-  const { log, warn } = console;
-  console.log = console.warn = () => {};
-  try {
-    return await fn();
-  } finally {
-    Object.assign(console, { log, warn });
-  }
-};
-
-/** Generates the request layer, compiles it to CommonJS and loads it. */
 async function load(http) {
-  const dir = join(root, ".conformance", "runtime", http);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  const source = join(dir, "ts");
-  await quiet(() =>
-    generate(
-      options({
-        input: CLIENTS_FIXTURE,
-        out: source,
-        http,
-        target: "requests",
-      }),
-      { cwd: root },
-    ),
-  );
-  execFileSync(
-    join(root, "node_modules/.bin/tsc"),
-    [
-      "--ignoreConfig",
-      "--strict",
-      "--skipLibCheck",
-      "--target",
-      "es2022",
-      "--module",
-      "commonjs",
-      "--lib",
-      "es2023,dom",
-      "--outDir",
-      join(dir, "js"),
-      ...readdirSync(source)
-        .filter((name) => name.endsWith(".ts"))
-        .map((name) => join(source, name)),
-    ],
-    { stdio: "pipe" },
-  );
-  // The package is ESM; what tsc wrote is CommonJS.
-  writeFileSync(join(dir, "js/package.json"), '{ "type": "commonjs" }');
+  const dir = await generateTo(http, { http, target: "requests" });
+  const js = compileCjs(dir);
   const require = createRequire(join(dir, "load.cjs"));
   return {
-    pets: require(join(dir, "js/pets.js")),
-    client: require(join(dir, "js/client.js")),
-    types: require(join(dir, "js/types.js")),
+    pets: require(join(js, "pets.js")),
+    client: require(join(js, "client.js")),
+    types: require(join(js, "types.js")),
   };
 }
-
-/** A server that records what it was asked and answers from `reply`. */
-function serve(reply) {
-  const seen = [];
-  const server = createServer(async (request, response) => {
-    const chunks = [];
-    for await (const chunk of request) chunks.push(chunk);
-    const entry = {
-      method: request.method,
-      url: request.url,
-      headers: request.headers,
-      body: Buffer.concat(chunks).toString("utf8"),
-    };
-    seen.push(entry);
-    const { status = 200, body } = reply(entry);
-    response.writeHead(status, { "content-type": "application/json" });
-    response.end(typeof body === "string" ? body : JSON.stringify(body));
-  });
-  return new Promise((resolve) =>
-    server.listen(0, "127.0.0.1", () =>
-      resolve({
-        seen,
-        base: `http://127.0.0.1:${server.address().port}/api/v1`,
-        close: () => new Promise((done) => server.close(done)),
-      }),
-    ),
-  );
-}
-
-const ok = (data) => ({ body: { result: true, code: 0, data } });
 
 for (const http of ["fetch", "axios"]) {
   describe(`the ${http} client`, () => {

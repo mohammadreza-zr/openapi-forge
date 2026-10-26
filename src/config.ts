@@ -4,6 +4,7 @@ import { access } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { HTTP_CLIENTS } from "./runtime/client.js";
 import { LIBRARIES, LIBRARY_NAMES } from "./runtime/libraries/index.js";
 import type {
   ForgeConfig,
@@ -210,9 +211,9 @@ export function resolveOptions(
       `openapi-forge: target must be "hooks" or "requests", not ${JSON.stringify(merged.target)}.`,
     );
   }
-  if (!["fetch", "axios"].includes(merged.http)) {
+  if (!HTTP_CLIENTS.includes(merged.http)) {
     throw new Error(
-      `openapi-forge: http must be "fetch" or "axios", not ${JSON.stringify(merged.http)}.`,
+      `openapi-forge: http must be one of ${HTTP_CLIENTS.join(", ")}, not ${JSON.stringify(merged.http)}.`,
     );
   }
   const infinite: unknown = merged.infinite;

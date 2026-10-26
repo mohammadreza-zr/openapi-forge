@@ -11,8 +11,6 @@ const shape = {
   maybeGetter: GETTER_TYPE,
 };
 
-// Svelte offers no way to ask "is there a component to clean up with?", so a
-// mutation's requests are not aborted when the component goes.
 export const svelteQuery: Library = {
   prefix: "create",
   reactive: true,
@@ -26,6 +24,13 @@ export const svelteQuery: Library = {
         createQuery: "createQuery",
         createMutation: "createMutation",
         createInfinite: "createInfiniteQuery",
+        imports: 'import { onDestroy } from "svelte";',
+        // `onDestroy` throws outside a component; there is then nothing to tear down.
+        teardown: `try {
+    onDestroy(abortAll);
+  } catch {
+    // not in a component
+  }`,
       },
       infinite,
     ),
