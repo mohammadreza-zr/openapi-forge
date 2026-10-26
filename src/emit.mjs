@@ -1,6 +1,7 @@
 // The emitter: one merged OpenAPI document in, the generated files out
 // (`models.ts`, one module per tag, `services.ts`, `index.ts`) as a
 // name → source map. Nothing here touches the disk or the network.
+import { upgradeDocument } from "./load/upgrade.mjs";
 import { emitZod } from "./emit-zod.mjs";
 import {
   camelCase,
@@ -11,6 +12,30 @@ import {
   propertyName,
   upperFirst,
 } from "./names.mjs";
+
+/** Types the emitted code uses by name, which a schema must not take over. */
+const GLOBAL_TYPES = new Set([
+  "Array",
+  "Blob",
+  "Boolean",
+  "Date",
+  "Error",
+  "File",
+  "FormData",
+  "Function",
+  "Map",
+  "Number",
+  "Object",
+  "Omit",
+  "Partial",
+  "Promise",
+  "Readonly",
+  "Record",
+  "Required",
+  "Set",
+  "String",
+  "Symbol",
+]);
 
 const HTTP_METHODS = ["get", "put", "post", "patch", "delete"];
 
@@ -35,6 +60,16 @@ export function emit(inputSpec, options, source) {
 
   const registry = () => spec.components?.schemas ?? {};
 
+  // Where the type being rendered comes from, and what the document leaves
+  // out there. The output stays valid (`unknown`); the problems are reported.
+  const SCHEMA_REF = "#/components/schemas/";
+  const inlining = new Set();
+  const problems = new Map();
+  let where = null;
+  const note = (message) => {
+    if (where) problems.set(`${where}: ${message}`, { where, message });
+  };
+
   function refTarget(ref) {
     let node = spec;
     for (const part of String(ref).replace(/^#\//, "").split("/")) {
@@ -54,7 +89,25 @@ export function emit(inputSpec, options, source) {
   const extraModels = new Map();
 
   function typeFor(schema, fallbackName) {
-    if (!schema || typeof schema !== "object") return "unknown";
+    if (!schema || typeof schema !== "object") {
+      note("has no schema, so it is typed `unknown`");
+      return "unknown";
+    }
+    if (schema.$ref && refTarget(schema.$ref) === undefined) {
+      note(
+        `refers to ${schema.$ref}, which does not exist, so it is typed \`unknown\``,
+      );
+      return "unknown";
+    }
+    if (schema.$ref && !String(schema.$ref).startsWith(SCHEMA_REF)) {
+      // A pointer into `paths` or another corner: it has no name to refer to.
+      const seen = inlining.has(schema.$ref);
+      if (seen) return "unknown";
+      inlining.add(schema.$ref);
+      const text = typeFor(refTarget(schema.$ref), fallbackName);
+      inlining.delete(schema.$ref);
+      return text;
+    }
     const text = schema.$ref
       ? modelName(schema.$ref)
       : renderType(schema, fallbackName);
@@ -96,6 +149,7 @@ export function emit(inputSpec, options, source) {
         if (resolved.additionalProperties) {
           return `Record<string, ${typeFor(resolved.additionalProperties, `${fallbackName}Value`)}>`;
         }
+        note("declares no type, so it is typed `unknown`");
         return "unknown";
       }
       case "string":
@@ -113,6 +167,9 @@ export function emit(inputSpec, options, source) {
       case "object":
         return objectLiteral(resolved, fallbackName);
       default:
+        note(
+          `has the unsupported type \`${resolved.type}\`, so it is typed \`unknown\``,
+        );
         return "unknown";
     }
   }
@@ -262,13 +319,24 @@ export function emit(inputSpec, options, source) {
           content["application/*+json"] ??
           Object.values(content).find((item) => item?.schema) ??
           null;
-        // The HTTP client sends no body with DELETE, so such an operation
-        // could only be emitted with its body silently dropped.
+        // The HTTP client sends no body with GET or DELETE, so a body on one
+        // is left out of the signature instead of being silently dropped.
+        const at = `${method.toUpperCase()} ${path}`;
         if (method === "delete" && operation.requestBody) {
-          console.warn(
-            `${generator}: skipped DELETE ${path}: it takes a request body, which the client cannot send with DELETE.`,
-          );
+          problems.set(`${at}: skipped`, {
+            where: at,
+            message:
+              "was skipped: it takes a request body, which the client cannot send with DELETE",
+          });
           continue;
+        }
+        const sendsBody = !(method === "get" && operation.requestBody);
+        if (!sendsBody) {
+          problems.set(`${at}: body`, {
+            where: at,
+            message:
+              "declares a request body, which cannot be sent with GET; it is left out",
+          });
         }
         const success =
           Object.entries(operation.responses ?? {}).find(([status]) =>
@@ -305,8 +373,8 @@ export function emit(inputSpec, options, source) {
                   path,
                 }) ?? item.name,
             })),
-          bodySchema: jsonBody?.schema ?? null,
-          bodyRequired: operation.requestBody?.required === true,
+          bodySchema: sendsBody ? (jsonBody?.schema ?? null) : null,
+          bodyRequired: sendsBody && operation.requestBody?.required === true,
           isUpload: Object.keys(content).some((type) =>
             /multipart\/form-data|x-www-form-urlencoded/.test(type),
           ),
@@ -481,12 +549,14 @@ export function emit(inputSpec, options, source) {
         "} as const;",
       ].join("\n"),
       hooks ? keyFactoryBlock(tag, operations, keys, endpoints) : "",
-      [
-        ...operations.map((operation) => queryTypeBlock(operation)),
-        ...writes.map((operation) => variablesBlock(operation)),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
+      shareIdenticalTypes(
+        [
+          ...operations.map((operation) => queryTypeBlock(operation)),
+          ...writes.map((operation) => variablesBlock(operation)),
+        ].filter(Boolean),
+        undefined,
+        true,
+      ).join("\n\n"),
       operations
         .map((operation) => requestBlock(operation, endpoints))
         .join("\n\n"),
@@ -517,12 +587,13 @@ export function emit(inputSpec, options, source) {
       ...new Set(operations.map((item) => rt.callers[item.method])),
     ].sort();
     lines.push(`import { ${callers.join(", ")} } from "${rt.callers.module}";`);
-    if (
+    const usesList =
       rt.list &&
       operations.some((operation) =>
         payloadFor(operation).startsWith(rt.list.name),
-      )
-    ) {
+      );
+    const listWithTypes = usesList && rt.list.module === rt.types.module;
+    if (usesList && !listWithTypes) {
       lines.push(`import type { ${rt.list.name} } from "${rt.list.module}";`);
     }
 
@@ -546,6 +617,7 @@ export function emit(inputSpec, options, source) {
     }
     const types = [
       rt.types.request,
+      ...(listWithTypes ? [rt.list.name] : []),
       ...(usesInfinite ? [rt.types.infinite] : []),
       ...(usesQuery ? [rt.types.query] : []),
       ...(usesMutation ? [rt.types.mutation] : []),
@@ -557,9 +629,6 @@ export function emit(inputSpec, options, source) {
     const available = new Set([
       ...Object.keys(registry()),
       ...extraModels.keys(),
-      ...operations.map((operation) =>
-        typeFor(operation.bodySchema, `${pascalCase(operation.name)}Body`),
-      ),
     ]);
     // Comments and string literals are stripped first: a document's prose
     // mentioning "Road", or a tag named "Plate Lists", is not a use of a type.
@@ -628,6 +697,90 @@ export function emit(inputSpec, options, source) {
         .map((operation) => infiniteKeyEntry(operation, keys, endpoints)),
       "} as const;",
     ].join("\n");
+  }
+
+  /** `{ key: { optional, type, lines } }` of an object type body, or null. */
+  function parseObjectBody(body) {
+    const props = new Map();
+    let doc = [];
+    for (const line of body.split("\n").slice(1, -1)) {
+      if (/^\s*\/\*\*.*\*\/$/.test(line)) {
+        doc = [line];
+        continue;
+      }
+      const prop = /^\s+("[^"]+"|[\w$]+)(\?)?: (.+);$/.exec(line);
+      if (!prop) return null;
+      props.set(prop[1], {
+        optional: Boolean(prop[2]),
+        type: prop[3],
+        lines: [...doc, line],
+      });
+      doc = [];
+    }
+    return props;
+  }
+
+  /**
+   * `Omit<Owner, …> & { … }` when `props` is the owner's shape with only a few
+   * properties changed, added or removed; null when it is not close enough.
+   */
+  function deriveFrom(owner, props) {
+    const keys = new Set([...owner.props.keys(), ...props.keys()]);
+    const removed = [];
+    const written = [];
+    let common = 0;
+    for (const key of keys) {
+      const before = owner.props.get(key);
+      const after = props.get(key);
+      if (!after) removed.push(key);
+      else if (!before) written.push(key);
+      else if (before.optional !== after.optional || before.type !== after.type)
+        (written.push(key), removed.push(key));
+      else common += 1;
+    }
+    const differing = new Set([...removed, ...written]).size;
+    if (common < 4 || differing > Math.max(1, Math.floor(keys.size / 4)))
+      return null;
+    const base = removed.length
+      ? `Omit<${owner.name}, ${removed.map((key) => (key.startsWith('"') ? key : `"${key}"`)).join(" | ")}>`
+      : owner.name;
+    const extra = written.flatMap((key) => props.get(key).lines);
+    return {
+      differing,
+      text: extra.length ? `${base} & {\n${extra.join("\n")}\n}` : base,
+    };
+  }
+
+  function shareIdenticalTypes(blocks, related = () => true, derive = false) {
+    // Types with the same shape are written once; the later ones alias the
+    // first, so a field added to the backend lands in a single place. Doc
+    // comments are not part of the shape, and only types `related` says belong
+    // together are merged — two entities that merely look alike stay apart.
+    // With `derive`, a type that differs from an earlier one in only a few
+    // properties is written as that type with those properties changed.
+    const owners = new Map();
+    const closest = [];
+    return blocks.map((block) => {
+      const match =
+        /^((?:\/\*\*.*\*\/\n)?)export type (\w+) = (\{[\s\S]*\});$/.exec(block);
+      if (!match) return block;
+      const shape = match[3].replace(/^\s*\/\*\*.*\*\/\n/gm, "");
+      const names = owners.get(shape) ?? [];
+      const owner = names.find((name) => related(name, match[2]));
+      if (owner) return `${match[1]}export type ${match[2]} = ${owner};`;
+
+      const props = derive ? parseObjectBody(match[3]) : null;
+      if (props) {
+        const best = closest
+          .map((candidate) => deriveFrom(candidate, props))
+          .filter(Boolean)
+          .sort((a, b) => a.differing - b.differing)[0];
+        if (best) return `${match[1]}export type ${match[2]} = ${best.text};`;
+        closest.push({ name: match[2], props });
+      }
+      owners.set(shape, [...names, match[2]]);
+      return block;
+    });
   }
 
   function queryTypeBlock(operation) {
@@ -706,7 +859,7 @@ export function emit(inputSpec, options, source) {
     if (operation.isUpload) configLines.push(`${keys.formData}: true`);
     if (operation.service) {
       configLines.push(
-        `${keys.baseUrl}: API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}]`,
+        `${keys.baseUrl}: config?.${keys.baseUrl} ?? API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}]`,
       );
     }
 
@@ -743,6 +896,14 @@ export function emit(inputSpec, options, source) {
     return `/**\n${lines.map((line) => ` * ${line}`).join("\n")}\n */`;
   }
 
+  /** What a missing path argument is keyed as while its query is disabled. */
+  function keyFallback(type) {
+    if (type === "string") return '""';
+    if (type === "number") return "0";
+    if (type === "boolean") return "false";
+    return "undefined as never";
+  }
+
   function queryHookBlock(operation, keys) {
     const payload = payloadFor(operation);
     const params = operation.pathParams.map(
@@ -764,7 +925,7 @@ export function emit(inputSpec, options, source) {
       ? [
           ...pathArgNames(operation).map(
             (item, index) =>
-              `${item} ?? ${paramType(operation.pathParams[index]) === "string" ? '""' : "0"}`,
+              `${item} ?? ${keyFallback(paramType(operation.pathParams[index]))}`,
           ),
           ...(operation.queryParams.length ? ["query"] : []),
         ].join(", ")
@@ -859,14 +1020,14 @@ export function emit(inputSpec, options, source) {
     const schemas = doc.components?.schemas;
     if (!schemas) return doc;
     const renames = new Map();
+    const taken = new Set(Object.keys(schemas));
     for (const name of Object.keys(schemas)) {
-      if (/^[A-Za-z_$][\w$]*$/.test(name)) continue;
-      const next = modelName(name);
-      if (next in schemas || [...renames.values()].includes(next)) {
-        throw new Error(
-          `${generator}: schema ${JSON.stringify(name)} would be renamed to ${next}, which is taken.`,
-        );
-      }
+      let next = modelName(name);
+      // A model must not shadow a global type the emitted code also uses.
+      if (GLOBAL_TYPES.has(next)) next = `${next}Model`;
+      if (next === name) continue;
+      for (let i = 2; taken.has(next); i += 1) next = `${modelName(name)}${i}`;
+      taken.add(next);
       renames.set(name, next);
     }
     if (!renames.size) return doc;
@@ -890,7 +1051,7 @@ export function emit(inputSpec, options, source) {
 
   // ── Assemble ──────────────────────────────────────────────────────────────
 
-  spec = normalizeSchemaNames(spec);
+  spec = normalizeSchemaNames(upgradeDocument(spec));
   const operations = collectOperations();
 
   const byTag = new Map();
@@ -909,12 +1070,18 @@ export function emit(inputSpec, options, source) {
   // is assembled — registered later, they would be missing from it.
   for (const tagOperations of byTag.values()) {
     for (const operation of tagOperations) {
+      const at = `${operation.method.toUpperCase()} ${operation.path}`;
+      where = `${at} response`;
       payloadFor(operation);
-      bodyTypeName(operation);
+      if (operation.bodySchema) {
+        where = `${at} request body`;
+        bodyTypeName(operation);
+      }
       for (const parameter of [
         ...operation.pathParams,
         ...operation.queryParams,
       ]) {
+        where = `${at} parameter \`${parameter.name}\``;
         paramType(parameter);
       }
     }
@@ -926,6 +1093,7 @@ export function emit(inputSpec, options, source) {
 
   for (const name of Object.keys(registry())) {
     const schema = registry()[name];
+    where = `schema ${name}`;
 
     // An `allOf` envelope uses the generic envelope type.
     const envelopePayload = envelopeDataPayload(schema);
@@ -983,6 +1151,8 @@ export function emit(inputSpec, options, source) {
     modelBlocks.set(name, `${comment}${block}`);
   }
 
+  where = null;
+
   for (const [name, body] of extraModels) {
     if (!modelBlocks.has(name)) {
       modelBlocks.set(name, `export type ${name} = ${body ?? "unknown"};`);
@@ -997,7 +1167,12 @@ export function emit(inputSpec, options, source) {
     "models.ts",
     `${bannerFrom}\n\n` +
       modelsImport +
-      [...modelBlocks.values()].join("\n\n") +
+      (modelBlocks.size
+        ? shareIdenticalTypes(
+            [...modelBlocks.values()],
+            (a, b) => a.includes(b) || b.includes(a),
+          ).join("\n\n")
+        : "export {};") +
       "\n",
   );
 
@@ -1007,7 +1182,8 @@ export function emit(inputSpec, options, source) {
       // Envelopes are unwrapped by the transport; their payloads have validators.
       skip: (name) =>
         !modelBlocks.has(name) ||
-        (rt.envelope && modelBlocks.get(name).includes(`= ${rt.envelope.name}<`)),
+        (rt.envelope &&
+          modelBlocks.get(name).includes(`= ${rt.envelope.name}<`)),
     });
     if (zod) files.set("schemas.ts", zod);
   }
@@ -1077,5 +1253,10 @@ export function emit(inputSpec, options, source) {
     (total, items) => total + items.length,
     0,
   );
-  return { files, operations: count, tags: byTag.size };
+  return {
+    files,
+    operations: count,
+    tags: byTag.size,
+    problems: [...problems.values()],
+  };
 }

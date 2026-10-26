@@ -7,6 +7,8 @@ import { get as httpsGet } from "node:https";
 import { isAbsolute, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
+import { upgradeDocument } from "./upgrade.mjs";
+
 const TAG = "openapi-forge";
 
 /**
@@ -46,9 +48,7 @@ function nodeRequestText(
       if (statusCode < 200 || statusCode >= 300) {
         response.resume();
         rejectPromise(
-          new Error(
-            `${TAG}: ${statusCode} ${response.statusMessage} — ${url}`,
-          ),
+          new Error(`${TAG}: ${statusCode} ${response.statusMessage} — ${url}`),
         );
         return;
       }
@@ -136,7 +136,10 @@ export async function fetchText(url, { headers, tls = {}, cwd }) {
   }
   let response;
   try {
-    response = await fetch(url, { headers, signal: AbortSignal.timeout(60_000) });
+    response = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(60_000),
+    });
   } catch (error) {
     throw tlsHintError(url, error);
   }
@@ -165,7 +168,7 @@ export function parseDocument(text, where = "the document") {
       `${TAG}: ${where} is empty or not an OpenAPI object — it has no \`openapi\` or \`paths\`.`,
     );
   }
-  return doc;
+  return upgradeDocument(doc);
 }
 
 /** One document, from a URL or a path. */

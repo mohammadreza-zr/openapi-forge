@@ -77,6 +77,26 @@ async function exists(file) {
   }
 }
 
+const SHOWN_PROBLEMS = 12;
+
+/**
+ * What the document leaves incomplete. The output is still valid — those
+ * spots are typed \`unknown\` — so this only tells the author where to look.
+ */
+function reportProblems(problems, verbose) {
+  if (!problems.length) return;
+  const shown = verbose ? problems : problems.slice(0, SHOWN_PROBLEMS);
+  console.warn(
+    `${TAG}: ${problems.length} incomplete type${problems.length === 1 ? "" : "s"} in the document:`,
+  );
+  for (const { where, message } of shown)
+    console.warn(`  ▲ ${where} ${message}`);
+  if (shown.length < problems.length)
+    console.warn(
+      `  … ${problems.length - shown.length} more (--verbose lists all)`,
+    );
+}
+
 /** The built-in client's files — only the ones the target needs. */
 function runtimeFiles(options) {
   const hooks = options.target === "hooks";
@@ -128,6 +148,7 @@ export async function generate(options, run) {
     interactive: run.interactive ?? false,
   });
   const emitted = emit(doc, options, source);
+  reportProblems(emitted.problems, options.verbose);
   const files = await formatFiles(emitted.files, {
     cwd,
     outDir,

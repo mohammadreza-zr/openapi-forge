@@ -122,6 +122,33 @@ If every answer is `{ result, code, message, data }`, the generated types and ca
 `{ count, list }` payload becomes `ApiListData<T>`. Set `runtime.envelope: false` / `runtime.list: false`
 for an API with neither.
 
+## Input it understands
+
+Swagger 2.0, OpenAPI 3.0 and 3.1, as JSON or YAML, from a file, a folder of files (one per service) or a URL. A 2.0 document is converted to 3.0 first (`definitions`, `in: body` / `formData`, `consumes` / `produces`, `x-nullable`); the 3.1 spellings (`type: [x, "null"]`, `const`) are folded into their 3.0 equivalents. Local `$ref`s that point outside `components` are inlined.
+
+What a document leaves out never breaks the output: that spot is typed `unknown`, and the run lists every one of them with the operation and the part (`response`, `request body`, `parameter x`, `schema Y`) so it can be fixed at the source.
+
+## Tested against real documents
+
+`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — and type-checks the output with `tsc --strict`. All 60 pass.
+
+## How it compares
+
+Measured, not claimed: the same 60 documents through Orval 8.45 (`--client react-query --mode tags-split`, default options) and type-checked the same way gave 56 clean outputs; the four failures were duplicate identifiers, a type mismatch on an optional body, and overload mismatches, and one document with only webhooks produced no files. Two honest caveats: this package was fixed against that corpus, Orval was not tuned for it, and Orval with a hand-written config may do better.
+
+| | openapi-forge | Orval |
+| --- | --- | --- |
+| Targets | fetch or your own transport, React Query | axios, fetch, Angular, SWR, Vue, Svelte, Solid, … |
+| Mocks (MSW), Faker | no, by design | yes |
+| What changed in the new spec | `pull` and `diff` report breaking / risky / safe changes by hook name | not built in |
+| Several backend services in one layer | merged; conflicts decided once and committed | a separate output per spec |
+| Same-shaped query and variable types | written once, the rest alias or derive from it | repeated per operation |
+| Incomplete spec | valid output + a located report of every gap | not compared |
+| Stale-output check for CI | `--check` | via re-run and `git diff` |
+| Setup check | `doctor` | not built in |
+
+Orval is the broader tool — more clients, mocks, a large plugin ecosystem. This one is deliberately narrower: a typed React Query layer you can read, review and keep in sync with several services.
+
 ## Opt-in extras
 
 Off by default, so the default output stays small.

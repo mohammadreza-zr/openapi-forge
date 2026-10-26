@@ -34,6 +34,8 @@ Options
   --ca <file.pem>        trust this CA certificate for an https URL
   --format <text|markdown|json>   with \`diff\`: the report format
   --fail-on <breaking|risky|safe> with \`diff\`: exit 1 at this severity or worse
+  --zod                  also write schemas.ts (Zod validators)
+  --infinite             add infinite-list hooks to paged reads
   --watch                rebuild when the input or config changes
   --interval <seconds>   with --watch on a URL input: how often to look (default 30)
   --check                exit 1 when the committed output is stale
@@ -87,6 +89,8 @@ try {
       format: { type: "string" },
       "fail-on": { type: "string" },
       watch: { type: "boolean" },
+      zod: { type: "boolean" },
+      infinite: { type: "boolean" },
       interval: { type: "string" },
       config: { type: "string" },
       input: { type: "string" },
@@ -201,6 +205,8 @@ async function main() {
   if (insecure || ca)
     cli.tls = { ...(insecure && { insecure }), ...(ca && { ca }) };
   if (values.raw) cli.format = false;
+  if (values.zod) cli.zod = true;
+  if (values.infinite) cli.infinite = true;
   if (values.verbose) cli.verbose = true;
   if (env.OPENAPI_FORGE_SOURCES)
     cli.sources = parseSourcePairs(env.OPENAPI_FORGE_SOURCES);

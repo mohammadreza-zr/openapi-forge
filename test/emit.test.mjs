@@ -116,7 +116,7 @@ test("services mark operations with their base URL", () => {
     "x",
   ).files;
   assert.match(files.get("services.ts"), /"pets": "https:\/\/pets\.test"/);
-  assert.match(files.get("pets.ts"), /baseUrl: API_SERVICE_BASE_URLS\["pets"\]/);
+  assert.match(files.get("pets.ts"), /baseUrl: config\?\.baseUrl \?\? API_SERVICE_BASE_URLS\["pets"\]/);
 });
 
 test("the banner names the generator and the source", () => {

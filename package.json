@@ -1,21 +1,42 @@
 {
   "name": "@mrzr/openapi-forge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generate a typed TypeScript API layer — models, request functions, query keys and React Query hooks — from OpenAPI / Swagger documents.",
-  "keywords": ["openapi", "swagger", "codegen", "typescript", "react-query", "tanstack-query"],
+  "keywords": [
+    "openapi",
+    "swagger",
+    "codegen",
+    "typescript",
+    "react-query",
+    "tanstack-query"
+  ],
   "license": "MIT",
   "type": "module",
-  "bin": { "openapi-forge": "./bin/openapi-forge.mjs" },
+  "bin": {
+    "openapi-forge": "./bin/openapi-forge.mjs"
+  },
   "main": "./src/index.mjs",
   "types": "./src/index.d.mts",
   "exports": {
-    ".": { "types": "./src/index.d.mts", "default": "./src/index.mjs" },
+    ".": {
+      "types": "./src/index.d.mts",
+      "default": "./src/index.mjs"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["bin", "src", "README.md", "LICENSE"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --test \"test/*.test.mjs\"",
+    "conformance": "node scripts/conformance.mjs"
   },
   "dependencies": {
     "yaml": "^2.9.0"
@@ -24,7 +45,20 @@
     "prettier": ">=3"
   },
   "peerDependenciesMeta": {
-    "prettier": { "optional": true }
+    "prettier": {
+      "optional": true
+    }
   },
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@readme/oas-examples": "^8.2.2",
+    "@tanstack/react-query": "^5.105.0",
+    "@types/react": "^19.3.0",
+    "prettier": "^3.9.10",
+    "react": "^19.3.1",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.7"
+  }
 }

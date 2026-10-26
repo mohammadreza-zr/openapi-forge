@@ -44,7 +44,7 @@ export type GeneratedRequestConfig<T = unknown> = {
   /** The query string. Arrays repeat the key; \`undefined\` and \`null\` are left out. */
   params?: Record<string, unknown>;
   /** Fills \`{name}\` in the route. */
-  addTemplateToUrl?: Record<string, string | number>;
+  addTemplateToUrl?: Record<string, unknown>;
   /** Send the body as multipart form data. */
   isFormData?: boolean;
   /** Prepended to the route; falls back to the client's default. */
@@ -103,7 +103,10 @@ function buildUrl(
 ): string {
   let path = route;
   for (const [key, value] of Object.entries(config?.addTemplateToUrl ?? {})) {
-    path = path.replaceAll(\`{\${key}}\`, encodeURIComponent(String(value)));
+    path = path.replaceAll(
+      \`{\${key}}\`,
+      encodeURIComponent(String(Array.isArray(value) ? value.join(",") : value)),
+    );
   }
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(config?.params ?? {})) {

@@ -131,3 +131,75 @@ test("watch rebuilds once for a burst of changes", async () => {
   stop();
   assert.equal(runs, 2); // the first build, then one for the burst
 });
+
+const withQueries = (...queries) => ({
+  openapi: "3.0.1",
+  paths: Object.fromEntries(
+    queries.map((names, index) => [
+      `/things${index}`,
+      {
+        get: {
+          operationId: `listThings${index}`,
+          tags: ["things"],
+          parameters: names.map((name) => ({
+            name: name.replace("!", ""),
+            in: "query",
+            required: name.endsWith("!"),
+            schema: { type: "string" },
+          })),
+          responses: { 200: {} },
+        },
+      },
+    ]),
+  ),
+});
+
+const base = ["a", "b", "c", "d", "e", "f", "g", "h"];
+
+test("a query that differs in one property is derived from the first", () => {
+  const things = emit(
+    withQueries(base, [...base.slice(0, 7), "h!"], [...base, "i", "j", "k"]),
+    options(),
+    "x",
+  ).files.get("things.ts");
+  assert.match(
+    things,
+    /ListThings1Query = Omit<ListThings0Query, "h"> & \{\s*h: string;\s*\}/,
+  );
+  assert.match(things, /ListThings2Query = \{[^}]*i\?: string/); // too far to derive
+});
+
+test("an identical query is an alias, not a derivation", () => {
+  const things = emit(withQueries(base, base), options(), "x").files.get(
+    "things.ts",
+  );
+  assert.match(things, /ListThings1Query = ListThings0Query;/);
+});
+
+test("an incomplete document still emits valid types and lists what is missing", () => {
+  const doc = paged();
+  doc.paths["/items"].get.responses = {
+    200: {
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/Missing" },
+        },
+      },
+    },
+  };
+  doc.components.schemas.Loose = { type: "object", properties: { any: {} } };
+  const { files, problems } = emit(doc, options(), "x");
+  assert.match(files.get("items.ts"), /apiGet<unknown>/);
+  const text = problems
+    .map((item) => `${item.where} ${item.message}`)
+    .join("\n");
+  assert.match(
+    text,
+    /GET \/items response refers to #\/components\/schemas\/Missing/,
+  );
+  assert.match(text, /schema Loose declares no type/);
+});
+
+test("a complete document reports nothing", () => {
+  assert.deepEqual(emit(paged(), options(), "x").problems, []);
+});
