@@ -43,11 +43,12 @@ create.mutate({ body: { name: "Tom" } });
 | --- | --- |
 | `openapi-forge [generate]` | write the layer |
 | `openapi-forge pull` | fetch the documents in `sources` into `specsDir`, then generate |
+| `openapi-forge diff <old> <new>` | report breaking / risky / safe changes between two documents (`--format`, `--fail-on`) |
 | `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
 
 Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
 `--target hooks|requests`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
-`--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`.
+`--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`.
 Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`,
 `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
 The command line wins over the config file, which wins over the defaults.
@@ -119,6 +120,27 @@ If every answer is `{ result, code, message, data }`, the generated types and ca
 `data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`, and a
 `{ count, list }` payload becomes `ApiListData<T>`. Set `runtime.envelope: false` / `runtime.list: false`
 for an API with neither.
+
+## Know what a new spec breaks
+
+`pull` prints what changed in every document it updates, in the terms of the code you consume — the operation, its generated hook, the schema and property:
+
+```
+sightings: 5 breaking, 0 risky, 34 safe
+
+breaking
+  ✖ GET /sightings (listSightings · useListSightingsQuery)
+      query parameter `plate` removed
+```
+
+Compare any two documents (files or URLs) yourself, for a PR comment or a CI gate:
+
+```bash
+openapi-forge diff old.yaml https://host/openapi.json --format markdown
+openapi-forge diff old.yaml new.yaml --fail-on breaking   # exit 1 on a breaking change
+```
+
+Severity: **breaking** (removed or retyped operation, parameter, property, response; a new required parameter), **risky** (a new required property, an enum value removed, a deprecation), **safe** (additions).
 
 ## Several services
 

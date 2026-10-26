@@ -5,6 +5,8 @@ import { parseArgs } from "node:util";
 
 import { loadConfigFile, resolveOptions } from "../src/config.mjs";
 import { generate } from "../src/generate.mjs";
+import { diffDocuments, exceeds, renderReport } from "../src/diff.mjs";
+import { readDocument } from "../src/load/source.mjs";
 import { parseSourcePairs, pull } from "../src/pull.mjs";
 
 const HELP = `openapi-forge — a typed API layer from OpenAPI / Swagger documents
@@ -12,6 +14,7 @@ const HELP = `openapi-forge — a typed API layer from OpenAPI / Swagger documen
 Usage
   openapi-forge [generate] [options]   write the API layer
   openapi-forge pull [options]         fetch the documents named in \`sources\`, then generate
+  openapi-forge diff <old> <new>       what changed between two documents (files or URLs)
   openapi-forge init                   write a starter openapi-forge.config.mjs
 
 Options
@@ -26,6 +29,8 @@ Options
   --headers "K: v;K2: v" request headers for a URL input
   --insecure             skip TLS verification (local dev only, never in CI)
   --ca <file.pem>        trust this CA certificate for an https URL
+  --format <text|markdown|json>   with \`diff\`: the report format
+  --fail-on <breaking|risky|safe> with \`diff\`: exit 1 at this severity or worse
   --check                exit 1 when the committed output is stale
   --raw                  skip prettier
   --force-runtime        rewrite the built-in runtime files too
@@ -63,15 +68,19 @@ export default defineConfig({
 `;
 
 const args = process.argv.slice(2);
-const command = ["generate", "pull", "init"].includes(args[0])
+const command = ["generate", "pull", "diff", "init"].includes(args[0])
   ? args.shift()
   : "generate";
 
 let values;
+let positionals;
 try {
-  ({ values } = parseArgs({
+  ({ values, positionals } = parseArgs({
     args,
+    allowPositionals: true,
     options: {
+      format: { type: "string" },
+      "fail-on": { type: "string" },
       config: { type: "string" },
       input: { type: "string" },
       out: { type: "string" },
@@ -124,11 +133,37 @@ async function main() {
 
   const cwd = process.cwd();
 
+  if (command === "diff") {
+    const [before, after] = positionals;
+    if (!before || !after)
+      throw new Error(
+        "openapi-forge: diff needs two documents — diff <old> <new>.",
+      );
+    const headers = parseHeaders(
+      values.headers ?? process.env.OPENAPI_FORGE_HEADERS,
+    );
+    const tls = {
+      ...(values.insecure && { insecure: true }),
+      ...(values.ca && { ca: values.ca }),
+    };
+    const [oldDoc, newDoc] = await Promise.all(
+      [before, after].map((location) =>
+        readDocument(location, { headers, tls, cwd }),
+      ),
+    );
+    const findings = diffDocuments(oldDoc, newDoc);
+    process.stdout.write(renderReport(findings, values.format ?? "text"));
+    if (exceeds(findings, values["fail-on"])) process.exitCode = 1;
+    return;
+  }
+
   if (command === "init") {
     const file = resolve(cwd, "openapi-forge.config.mjs");
     await writeFile(file, STARTER, { flag: "wx" }).catch((error) => {
       if (error.code === "EEXIST")
-        throw new Error("openapi-forge: openapi-forge.config.mjs already exists.");
+        throw new Error(
+          "openapi-forge: openapi-forge.config.mjs already exists.",
+        );
       throw error;
     });
     return console.log("openapi-forge: wrote openapi-forge.config.mjs");
@@ -156,7 +191,8 @@ async function main() {
       String(env.OPENAPI_FORGE_INSECURE ?? "").toLowerCase(),
     );
   const ca = values.ca ?? env.OPENAPI_FORGE_CA;
-  if (insecure || ca) cli.tls = { ...(insecure && { insecure }), ...(ca && { ca }) };
+  if (insecure || ca)
+    cli.tls = { ...(insecure && { insecure }), ...(ca && { ca }) };
   if (values.raw) cli.format = false;
   if (values.verbose) cli.verbose = true;
   if (env.OPENAPI_FORGE_SOURCES)

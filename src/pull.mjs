@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { fetchText } from "./load/source.mjs";
+import { diffDocuments, renderReport } from "./diff.mjs";
 
 const TAG = "openapi-forge";
 const SERVICE_NAME = /^[a-z0-9][a-z0-9-]*$/i;
@@ -20,7 +21,9 @@ export function parseSourcePairs(text) {
     const name = trimmed.slice(0, separator).trim();
     const url = trimmed.slice(separator + 1).trim();
     if (separator === -1 || !SERVICE_NAME.test(name) || !URL.canParse(url)) {
-      throw new Error(`${TAG}: ${JSON.stringify(trimmed)} is not a \`name=url\` pair.`);
+      throw new Error(
+        `${TAG}: ${JSON.stringify(trimmed)} is not a \`name=url\` pair.`,
+      );
     }
     out[name] = url;
   }
@@ -65,6 +68,11 @@ export async function pull(options, { cwd }) {
     console.log(
       `${TAG}: ${name} ${current === text ? "unchanged" : current === null ? "added" : "updated"}`,
     );
+    if (current !== null && current !== text) {
+      const findings = diffDocuments(parseYaml(current), parseYaml(text));
+      if (findings.length)
+        console.log(renderReport(findings, "text", { title: name }));
+    }
   }
   return pulled.map(({ name }) => name);
 }
