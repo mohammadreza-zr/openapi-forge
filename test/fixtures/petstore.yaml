@@ -1,0 +1,140 @@
+openapi: 3.0.3
+info: { title: Pets, version: "1.0" }
+tags: [{ name: Pets }, { name: Owners }]
+paths:
+  /api/v1/pets:
+    get:
+      tags: [Pets]
+      operationId: listPets
+      summary: List the pets
+      parameters:
+        - { name: start, in: query, schema: { type: integer } }
+        - { name: kind, in: query, schema: { type: string, enum: [cat, dog] } }
+        - { name: ids, in: query, schema: { type: array, items: { type: string } } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetListEnvelope" }
+    post:
+      tags: [Pets]
+      operationId: createPet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PetRequest" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetEnvelope" }
+  /api/v1/pets/{pet_id}:
+    get:
+      tags: [Pets]
+      operationId: getPet
+      parameters:
+        - { name: pet_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetEnvelope" }
+    delete:
+      tags: [Pets]
+      operationId: deletePet
+      deprecated: true
+      parameters:
+        - { name: pet_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmptyEnvelope" }
+  /api/v1/pets/{pet_id}/photo:
+    post:
+      tags: [Pets]
+      operationId: uploadPhoto
+      parameters:
+        - { name: pet_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmptyEnvelope" }
+  /api/v1/owners:
+    get:
+      tags: [Owners]
+      operationId: listOwners
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Owner" }
+components:
+  schemas:
+    EnvelopeBase:
+      type: object
+      properties:
+        result: { type: boolean }
+        code: { type: integer }
+        message: { type: string, nullable: true }
+        data: {}
+    Pet:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string, description: The pet's name }
+        kind: { type: string, enum: [cat, dog] }
+        owner: { $ref: "#/components/schemas/Owner" }
+    Owner:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string, nullable: true }
+    PetRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [cat, dog] }
+    PetEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/Pet" }
+    PetListEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                count: { type: integer }
+                list:
+                  type: array
+                  items: { $ref: "#/components/schemas/Pet" }
+    EmptyEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          properties:
+            data: { nullable: true }

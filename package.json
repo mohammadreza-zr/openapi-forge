@@ -1,0 +1,30 @@
+{
+  "name": "@mrzr/openapi-forge",
+  "version": "0.1.0",
+  "description": "Generate a typed TypeScript API layer — models, request functions, query keys and React Query hooks — from OpenAPI / Swagger documents.",
+  "keywords": ["openapi", "swagger", "codegen", "typescript", "react-query", "tanstack-query"],
+  "license": "MIT",
+  "type": "module",
+  "bin": { "openapi-forge": "./bin/openapi-forge.mjs" },
+  "main": "./src/index.mjs",
+  "types": "./src/index.d.mts",
+  "exports": {
+    ".": { "types": "./src/index.d.mts", "default": "./src/index.mjs" },
+    "./package.json": "./package.json"
+  },
+  "files": ["bin", "src", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
+  },
+  "peerDependencies": {
+    "prettier": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "prettier": { "optional": true }
+  },
+  "publishConfig": { "access": "public" }
+}
