@@ -1,6 +1,7 @@
 // The emitter: one merged OpenAPI document in, the generated files out
 // (`models.ts`, one module per tag, `services.ts`, `index.ts`) as a
 // name → source map. Nothing here touches the disk or the network.
+import { emitZod } from "./emit-zod.mjs";
 import {
   camelCase,
   identifier,
@@ -352,7 +353,12 @@ export function emit(inputSpec, options, source) {
     const data = wraps ? props[rt.envelope.data] : declared;
 
     if (!data) return "null";
-    if (data.nullable === true && !data.$ref && !data.type && !data.properties) {
+    if (
+      data.nullable === true &&
+      !data.$ref &&
+      !data.type &&
+      !data.properties
+    ) {
       return "null";
     }
 
@@ -399,6 +405,60 @@ export function emit(inputSpec, options, source) {
       : `${endpoints}[${name}]`;
   }
 
+  /**
+   * A read is an infinite list when it answers the paged shape and takes both
+   * paging parameters; the query it is given is the rest of its parameters.
+   */
+  function infiniteOf(operation) {
+    const { infinite } = options;
+    if (!hooks || !infinite || !rt.list || operation.method !== "get")
+      return null;
+    if (operation.pathParams.length) return null;
+    const payload = payloadFor(operation);
+    if (!payload.startsWith(`${rt.list.name}<`)) return null;
+    const names = operation.queryParams.map((item) => item.name);
+    if (!names.includes(infinite.start) || !names.includes(infinite.size))
+      return null;
+    const rest = operation.queryParams.filter(
+      (item) => item.name !== infinite.start && item.name !== infinite.size,
+    );
+    return {
+      item: payload.slice(rt.list.name.length + 1, -1),
+      rest,
+      omit: `Omit<${queryTypeName(operation)}, ${JSON.stringify(infinite.start)} | ${JSON.stringify(infinite.size)}>`,
+      optional: !rest.some((item) => item.required),
+    };
+  }
+
+  const infiniteKey = (operation) => `${operation.name}Infinite`;
+
+  function infiniteKeyEntry(operation, keys, endpoints) {
+    const { omit } = infiniteOf(operation);
+    return [
+      `  ${infiniteKey(operation)}: (params: ${omit}) =>`,
+      `    [...${keys}.lists(), ${endpointRef(endpoints, operation)}, "infinite", params] as const,`,
+    ].join("\n");
+  }
+
+  function infiniteHookBlock(operation, keys) {
+    const { item, omit, optional } = infiniteOf(operation);
+    const { start, size } = options.infinite;
+    return [
+      requestDoc(operation),
+      `export function use${pascalCase(operation.name)}InfiniteQuery(`,
+      `  query: ${omit}${optional ? " = {}" : ""},`,
+      `  options?: ${rt.types.infinite}<${item}, ReturnType<typeof ${keys}.${infiniteKey(operation)}>>,`,
+      `) {`,
+      `  return ${rt.hooks.infinite}(`,
+      `    ${keys}.${infiniteKey(operation)}(query),`,
+      `    (page, signal) =>`,
+      `      ${operation.name}({ ...query, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }, { ${rt.requestKeys.signal === "signal" ? "signal" : `${rt.requestKeys.signal}: signal`} }),`,
+      `    options,`,
+      `  );`,
+      `}`,
+    ].join("\n");
+  }
+
   function tagModule(tag, operations) {
     const name = identifier(tag, "api");
     const keys = `${name}Keys`;
@@ -431,7 +491,13 @@ export function emit(inputSpec, options, source) {
         .map((operation) => requestBlock(operation, endpoints))
         .join("\n\n"),
       hooks
-        ? reads.map((operation) => queryHookBlock(operation, keys)).join("\n\n")
+        ? reads
+            .flatMap((operation) => [
+              queryHookBlock(operation, keys),
+              infiniteOf(operation) ? infiniteHookBlock(operation, keys) : null,
+            ])
+            .filter(Boolean)
+            .join("\n\n")
         : "",
       hooks
         ? writes
@@ -466,7 +532,9 @@ export function emit(inputSpec, options, source) {
       hooks && operations.some((operation) => operation.method !== "get");
     // The hooks below are one line over the generic core — the query/mutation
     // wiring lives once in the hooks module, not once per operation.
+    const usesInfinite = operations.some((operation) => infiniteOf(operation));
     const runtime = [
+      ...(usesInfinite ? [rt.hooks.infinite] : []),
       ...(usesQuery ? [rt.hooks.query] : []),
       ...(usesMutation ? [rt.hooks.mutation] : []),
     ];
@@ -478,10 +546,13 @@ export function emit(inputSpec, options, source) {
     }
     const types = [
       rt.types.request,
+      ...(usesInfinite ? [rt.types.infinite] : []),
       ...(usesQuery ? [rt.types.query] : []),
       ...(usesMutation ? [rt.types.mutation] : []),
     ].sort();
-    lines.push(`import type { ${types.join(", ")} } from "${rt.types.module}";`);
+    lines.push(
+      `import type { ${types.join(", ")} } from "${rt.types.module}";`,
+    );
 
     const available = new Set([
       ...Object.keys(registry()),
@@ -552,6 +623,9 @@ export function emit(inputSpec, options, source) {
           `    [...${keys}.${isDetail ? "details()" : "lists()"}, ${endpointRef(endpoints, operation)}${tail ? `, ${tail}` : ""}] as const,`,
         ].join("\n");
       }),
+      ...reads
+        .filter((operation) => infiniteOf(operation))
+        .map((operation) => infiniteKeyEntry(operation, keys, endpoints)),
       "} as const;",
     ].join("\n");
   }
@@ -712,7 +786,8 @@ export function emit(inputSpec, options, source) {
           .join(" && ")
       : "";
     const signal = rt.requestKeys.signal;
-    const signalArg = signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
+    const signalArg =
+      signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
 
     return [
       requestDoc(operation),
@@ -720,7 +795,9 @@ export function emit(inputSpec, options, source) {
       `  return ${rt.hooks.query}(`,
       `    ${keys}.${operation.name}(${keyArgs}),`,
       `    (signal) => ${operation.name}(${callArgs.length ? `${callArgs.join(", ")}, ` : ""}${signalArg}),`,
-      ...(guard ? [`    { enabled: ${guard}, ...options },`] : [`    options,`]),
+      ...(guard
+        ? [`    { enabled: ${guard}, ...options },`]
+        : [`    options,`]),
       `  );`,
       `}`,
     ].join("\n");
@@ -735,7 +812,8 @@ export function emit(inputSpec, options, source) {
     );
     const variablesType = hasVariables ? variablesTypeName(operation) : "void";
     const signal = rt.requestKeys.signal;
-    const signalArg = signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
+    const signalArg =
+      signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
 
     const lines = [
       requestDoc(operation),
@@ -746,7 +824,9 @@ export function emit(inputSpec, options, source) {
     ];
 
     if (!hasVariables) {
-      lines.push(`    (_variables, signal) => ${operation.name}(${signalArg}),`);
+      lines.push(
+        `    (_variables, signal) => ${operation.name}(${signalArg}),`,
+      );
     } else {
       const slots = [...pathArgNames(operation)];
       const callArgs = [...pathArgNames(operation)];
@@ -921,8 +1001,18 @@ export function emit(inputSpec, options, source) {
       "\n",
   );
 
-  const fileName = (tag) =>
-    options.transform.fileName?.(tag) ?? camelCase(tag);
+  if (options.zod) {
+    const zod = emitZod(spec, {
+      banner: bannerFrom,
+      // Envelopes are unwrapped by the transport; their payloads have validators.
+      skip: (name) =>
+        !modelBlocks.has(name) ||
+        (rt.envelope && modelBlocks.get(name).includes(`= ${rt.envelope.name}<`)),
+    });
+    if (zod) files.set("schemas.ts", zod);
+  }
+
+  const fileName = (tag) => options.transform.fileName?.(tag) ?? camelCase(tag);
   for (const [tag, tagOperations] of byTag) {
     files.set(`${fileName(tag)}.ts`, tagModule(tag, tagOperations));
   }
@@ -953,7 +1043,9 @@ export function emit(inputSpec, options, source) {
           ? `/** Each backend service's base URL (see \`${rt.services.fn}\`). */`
           : "/** Each backend service's base URL. */",
         `export const API_SERVICE_BASE_URLS = {`,
-        ...services.map((service) => `  ${JSON.stringify(service)}: ${entry(service)},`),
+        ...services.map(
+          (service) => `  ${JSON.stringify(service)}: ${entry(service)},`,
+        ),
         `} as const;`,
       ].join("\n") + "\n",
     );
@@ -974,6 +1066,7 @@ export function emit(inputSpec, options, source) {
       bannerPlain,
       `export * from "./models";`,
       `export * from "./services";`,
+      ...(files.has("schemas.ts") ? [`export * from "./schemas";`] : []),
       ...[...byTag.keys()]
         .sort()
         .map((tag) => `export * from "./${fileName(tag)}";`),

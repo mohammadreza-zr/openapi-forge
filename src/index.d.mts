@@ -47,6 +47,10 @@ export interface ForgeConfig {
   /** `"hooks"` adds React Query hooks and key factories. */
   target?: "hooks" | "requests";
   tags?: { include?: string[]; exclude?: string[] };
+  /** Adds an infinite-list hook to paged reads; names the paging query parameters. */
+  infinite?: boolean | { start?: string; size?: string };
+  /** Also writes `schemas.ts`: a Zod validator per model. */
+  zod?: boolean;
   runtime?: DeepPartial<RuntimeConfig>;
   generatorName?: string;
   decisionsFile?: string;
@@ -90,6 +94,31 @@ export function emit(
   source: string,
 ): { files: Map<string, string>; operations: number; tags: number };
 export function pull(options: ForgeConfig & Record<string, any>, run: { cwd: string }): Promise<string[]>;
+export type Finding = {
+  severity: "breaking" | "risky" | "safe";
+  kind: string;
+  message: string;
+  operation?: string;
+  schema?: string;
+  name?: string;
+  hook?: string;
+};
+export function diffDocuments(oldDoc: object, newDoc: object): Finding[];
+export function renderReport(
+  findings: Finding[],
+  format?: "text" | "markdown" | "json",
+  options?: { title?: string },
+): string;
+export function summarize(findings: Finding[]): Record<Finding["severity"], number>;
+export function exceeds(findings: Finding[], threshold?: Finding["severity"]): boolean;
+export function doctor(
+  options: ForgeConfig & Record<string, any>,
+  run: { cwd: string; configFile?: string | null },
+): Promise<{ level: "ok" | "warn" | "fail"; message: string }[]>;
+export function watchRun(
+  rebuild: () => Promise<void>,
+  where: { paths: string[]; poll?: number },
+): () => void;
 export function parseSourcePairs(text: string): Record<string, string>;
 export function mergeSpecs(
   services: { name: string; doc: object }[],

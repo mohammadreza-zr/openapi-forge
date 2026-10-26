@@ -10,6 +10,8 @@ import { loadInput } from "./load/services.mjs";
 import {
   CLIENT_TS,
   HOOKS_TS,
+  INFINITE_HOOK_TS,
+  INFINITE_TYPES_TS,
   OPTION_TYPES_IMPORT,
   OPTION_TYPES_TS,
   TYPES_TS,
@@ -41,7 +43,8 @@ async function formatFiles(files, { cwd, outDir, format }) {
     );
     return files;
   }
-  const config = (await prettier.resolveConfig(join(cwd, "package.json"))) ?? {};
+  const config =
+    (await prettier.resolveConfig(join(cwd, "package.json"))) ?? {};
   const formatted = new Map();
   for (const [name, source] of files) {
     try {
@@ -76,14 +79,39 @@ async function exists(file) {
 
 /** The built-in client's files — only the ones the target needs. */
 function runtimeFiles(options) {
+  const hooks = options.target === "hooks";
+  const infinite = hooks && options.infinite;
+  let types = TYPES_TS;
+  let hookSource = HOOKS_TS;
+  if (hooks) {
+    const imports = infinite
+      ? OPTION_TYPES_IMPORT.replace(
+          "  QueryKey,",
+          "  InfiniteData,\n  QueryKey,\n  UseInfiniteQueryOptions,",
+        )
+      : OPTION_TYPES_IMPORT;
+    types =
+      types.replace(
+        "\n/** What every answer",
+        `${imports}\n/** What every answer`,
+      ) +
+      OPTION_TYPES_TS +
+      (infinite ? INFINITE_TYPES_TS : "");
+  }
+  if (infinite) {
+    hookSource =
+      hookSource
+        .replace("  useMutation,", "  useInfiniteQuery,\n  useMutation,")
+        .replace(
+          'import type { ApiMutationOptions, ApiQueryOptions } from "./types";',
+          'import type {\n  ApiInfiniteQueryOptions,\n  ApiListData,\n  ApiMutationOptions,\n  ApiQueryOptions,\n} from "./types";',
+        ) + INFINITE_HOOK_TS;
+  }
   const files = new Map([
-    ["types.ts", options.target === "hooks"
-      ? TYPES_TS.replace("\n/** What every answer", `${OPTION_TYPES_IMPORT}\n/** What every answer`) +
-        OPTION_TYPES_TS
-      : TYPES_TS],
+    ["types.ts", types],
     ["client.ts", CLIENT_TS],
   ]);
-  if (options.target === "hooks") files.set("hooks.ts", HOOKS_TS);
+  if (hooks) files.set("hooks.ts", hookSource);
   return files;
 }
 
@@ -127,7 +155,10 @@ export async function generate(options, run) {
 
   await mkdir(outDir, { recursive: true });
   for (const [name, text] of files) {
-    await writeFile(join(outDir, name), text, "utf8");
+    const file = join(outDir, name);
+    // An unchanged file keeps its mtime, so watchers and bundlers stay quiet.
+    if ((await readFile(file, "utf8").catch(() => null)) !== text)
+      await writeFile(file, text, "utf8");
   }
 
   // The runtime is the project's to edit: write it only when it is missing.

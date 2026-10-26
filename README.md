@@ -44,11 +44,12 @@ create.mutate({ body: { name: "Tom" } });
 | `openapi-forge [generate]` | write the layer |
 | `openapi-forge pull` | fetch the documents in `sources` into `specsDir`, then generate |
 | `openapi-forge diff <old> <new>` | report breaking / risky / safe changes between two documents (`--format`, `--fail-on`) |
+| `openapi-forge doctor` | check the config, input, output, packages and runtime modules |
 | `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
 
 Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
 `--target hooks|requests`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
-`--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`.
+`--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`, `--watch`, `--interval <s>`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`.
 Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`,
 `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
 The command line wins over the config file, which wins over the defaults.
@@ -120,6 +121,25 @@ If every answer is `{ result, code, message, data }`, the generated types and ca
 `data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`, and a
 `{ count, list }` payload becomes `ApiListData<T>`. Set `runtime.envelope: false` / `runtime.list: false`
 for an API with neither.
+
+## Opt-in extras
+
+Off by default, so the default output stays small.
+
+```js
+export default defineConfig({
+  zod: true,       // schemas.ts: a Zod validator per model, typed as `z.ZodType<Model>`
+  infinite: true,  // use<Op>InfiniteQuery for every paged read with `start` + `offset`
+  // infinite: { start: "page", size: "limit" },   // other paging parameter names
+});
+```
+
+`zod` needs the `zod` package. `infinite` needs `useApiInfiniteQuery` and `ApiInfiniteQueryOptions` in a custom runtime (the built-in one writes them).
+
+```bash
+openapi-forge --watch            # rebuild when a local document changes (a URL is polled: --interval 30)
+openapi-forge doctor             # config, input, output, installed packages, runtime modules
+```
 
 ## Know what a new spec breaks
 

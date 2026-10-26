@@ -3,6 +3,8 @@ export { emit } from "./emit.mjs";
 export { generate } from "./generate.mjs";
 export { pull, parseSourcePairs } from "./pull.mjs";
 export { diffDocuments, renderReport, summarize, exceeds } from "./diff.mjs";
+export { doctor } from "./doctor.mjs";
+export { watchRun } from "./watch.mjs";
 export { mergeSpecs } from "./load/merge.mjs";
 export { camelCase, pascalCase } from "./names.mjs";
 

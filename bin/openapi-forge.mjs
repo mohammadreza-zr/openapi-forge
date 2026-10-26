@@ -5,6 +5,8 @@ import { parseArgs } from "node:util";
 
 import { loadConfigFile, resolveOptions } from "../src/config.mjs";
 import { generate } from "../src/generate.mjs";
+import { doctor, renderChecks } from "../src/doctor.mjs";
+import { watchRun } from "../src/watch.mjs";
 import { diffDocuments, exceeds, renderReport } from "../src/diff.mjs";
 import { readDocument } from "../src/load/source.mjs";
 import { parseSourcePairs, pull } from "../src/pull.mjs";
@@ -15,6 +17,7 @@ Usage
   openapi-forge [generate] [options]   write the API layer
   openapi-forge pull [options]         fetch the documents named in \`sources\`, then generate
   openapi-forge diff <old> <new>       what changed between two documents (files or URLs)
+  openapi-forge doctor                 check the config, input, output and installed packages
   openapi-forge init                   write a starter openapi-forge.config.mjs
 
 Options
@@ -31,6 +34,8 @@ Options
   --ca <file.pem>        trust this CA certificate for an https URL
   --format <text|markdown|json>   with \`diff\`: the report format
   --fail-on <breaking|risky|safe> with \`diff\`: exit 1 at this severity or worse
+  --watch                rebuild when the input or config changes
+  --interval <seconds>   with --watch on a URL input: how often to look (default 30)
   --check                exit 1 when the committed output is stale
   --raw                  skip prettier
   --force-runtime        rewrite the built-in runtime files too
@@ -68,7 +73,7 @@ export default defineConfig({
 `;
 
 const args = process.argv.slice(2);
-const command = ["generate", "pull", "diff", "init"].includes(args[0])
+const command = ["generate", "pull", "diff", "doctor", "init"].includes(args[0])
   ? args.shift()
   : "generate";
 
@@ -81,6 +86,8 @@ try {
     options: {
       format: { type: "string" },
       "fail-on": { type: "string" },
+      watch: { type: "boolean" },
+      interval: { type: "string" },
       config: { type: "string" },
       input: { type: "string" },
       out: { type: "string" },
@@ -169,7 +176,7 @@ async function main() {
     return console.log("openapi-forge: wrote openapi-forge.config.mjs");
   }
 
-  const { config } = await loadConfigFile(cwd, values.config);
+  const { config, file: configFile } = await loadConfigFile(cwd, values.config);
   const env = process.env;
   const cli = {};
   const input = values.input ?? env.OPENAPI_FORGE_INPUT;
@@ -205,6 +212,34 @@ async function main() {
     if (values["no-pull"]) return;
     // A pull feeds the specs folder, which is then the input.
     if (!input && !config.input) options.input = options.specsDir;
+  }
+
+  if (command === "doctor") {
+    const results = await doctor(options, { cwd, configFile });
+    console.log(renderChecks(results));
+    if (results.some((item) => item.level === "fail")) process.exitCode = 1;
+    return;
+  }
+
+  if (values.watch) {
+    const inputs = [options.input]
+      .flat()
+      .flatMap((item) =>
+        typeof item === "object" ? Object.values(item) : item,
+      )
+      .filter((item) => typeof item === "string");
+    const remote = inputs.some((item) => /^https?:\/\//.test(item));
+    watchRun(
+      () => generate(options, { cwd, forceRuntime: false }).then(() => {}),
+      {
+        paths: inputs
+          .filter((item) => !/^https?:\/\//.test(item))
+          .map((item) => resolve(cwd, item)),
+        poll: remote ? Number(values.interval ?? 30) : 0,
+      },
+    );
+    console.log("openapi-forge: watching — press Ctrl+C to stop.");
+    return;
   }
 
   const result = await generate(options, {

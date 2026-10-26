@@ -256,3 +256,45 @@ export function useApiMutation<TData, TVariables>(
   });
 }
 `;
+
+/** Added to `types.ts` and `hooks.ts` when `infinite` is on. */
+export const INFINITE_TYPES_TS = `
+/** What a generated infinite-list hook takes beside its query. */
+export type ApiInfiniteQueryOptions<
+  TItem,
+  TKey extends QueryKey = QueryKey,
+> = Omit<
+  UseInfiniteQueryOptions<
+    ApiListData<TItem>,
+    Error,
+    InfiniteData<ApiListData<TItem>>,
+    TKey,
+    number
+  >,
+  "queryKey" | "queryFn" | "initialPageParam" | "getNextPageParam"
+> & { pageSize?: number };
+`;
+
+export const INFINITE_HOOK_TS = `
+/** A list read page by page: each page starts where the loaded ones end. */
+export function useApiInfiniteQuery<TItem, TKey extends QueryKey>(
+  key: TKey,
+  fetcher: (
+    page: { start: number; size: number },
+    signal: AbortSignal,
+  ) => Promise<ApiListData<TItem>>,
+  { pageSize = 20, ...options }: ApiInfiniteQueryOptions<TItem, TKey> = {},
+) {
+  return useInfiniteQuery({
+    ...options,
+    queryKey: key,
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      fetcher({ start: pageParam, size: pageSize }, signal),
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((sum, page) => sum + page.list.length, 0);
+      return last.list.length && loaded < last.count ? loaded : undefined;
+    },
+  });
+}
+`;
