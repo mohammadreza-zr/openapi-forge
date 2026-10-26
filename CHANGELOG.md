@@ -10,6 +10,7 @@
 - A per-call `baseUrl` now wins over the service's default.
 - An incomplete document no longer produces broken output: unknown spots are typed `unknown` and listed.
 - Fixes found by the conformance corpus: schema names normalised and kept clear of global types, empty `models.ts`, array and object path parameters, `GET` with a body, `$ref`s into `paths`, imports of union text.
+- Found on two live backends (NestJS and FastAPI): an inline object no longer takes the name of a component or of another inline object; `type: null`, `additionalProperties: true` and `prefixItems` (tuples) are understood.
 - `npm run conformance`: 60 public documents generated and type-checked.
 
 ## 0.1.0

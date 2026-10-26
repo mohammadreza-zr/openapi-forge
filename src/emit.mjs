@@ -89,6 +89,8 @@ export function emit(inputSpec, options, source) {
   const extraModels = new Map();
 
   function typeFor(schema, fallbackName) {
+    // JSON Schema's `true`: any value, said on purpose (`additionalProperties: true`).
+    if (schema === true) return "unknown";
     if (!schema || typeof schema !== "object") {
       note("has no schema, so it is typed `unknown`");
       return "unknown";
@@ -152,6 +154,8 @@ export function emit(inputSpec, options, source) {
         note("declares no type, so it is typed `unknown`");
         return "unknown";
       }
+      case "null":
+        return "null";
       case "string":
         // An uploaded file (`multipart/form-data`) is sent as one, not as text.
         return resolved.format === "binary" ? "Blob" : "string";
@@ -161,6 +165,10 @@ export function emit(inputSpec, options, source) {
       case "boolean":
         return "boolean";
       case "array": {
+        // A fixed-length list (OpenAPI 3.1 `prefixItems`) is a tuple.
+        if (resolved.prefixItems?.length) {
+          return `[${resolved.prefixItems.map((part, index) => typeFor(part, `${fallbackName}Item${index}`)).join(", ")}]`;
+        }
         const item = typeFor(resolved.items, `${fallbackName}Item`);
         return /[|&\s]/.test(item) ? `(${item})[]` : `${item}[]`;
       }
@@ -197,15 +205,36 @@ export function emit(inputSpec, options, source) {
     return clean.join(" | ");
   }
 
-  function objectLiteral(schema, fallbackName) {
+  /**
+   * The name an inline object is emitted under. A schema keeps its name, and a
+   * second, different object that would take a name already held (by another
+   * inline object, or by a component of that name) gets a numeric suffix.
+   */
+  const inlineOwners = new Map();
+  function claimName(schema, name) {
+    for (let candidate = name, i = 2; ; candidate = `${name}${i++}`) {
+      const owner = inlineOwners.get(candidate);
+      if (owner === schema) return candidate;
+      if (
+        owner === undefined &&
+        (!(candidate in registry()) || registry()[candidate] === schema)
+      ) {
+        inlineOwners.set(candidate, schema);
+        return candidate;
+      }
+    }
+  }
+
+  function objectLiteral(schema, requestedName) {
     const properties = schema.properties ?? {};
     const names = Object.keys(properties);
     if (!names.length) {
       return schema.additionalProperties
-        ? `Record<string, ${typeFor(schema.additionalProperties, `${fallbackName}Value`)}>`
+        ? `Record<string, ${typeFor(schema.additionalProperties, `${requestedName}Value`)}>`
         : "Record<string, unknown>";
     }
 
+    const fallbackName = claimName(schema, requestedName);
     if (extraModels.has(fallbackName)) return fallbackName;
     extraModels.set(fallbackName, null); // claimed first, so a cycle terminates
 

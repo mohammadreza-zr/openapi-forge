@@ -7,6 +7,7 @@ const refName = (ref) => `${camelCase(modelName(ref))}Schema`;
 const list = (items) => items.join(", ");
 
 function render(schema) {
+  if (schema === true) return "z.unknown()";
   if (!schema || typeof schema !== "object") return "z.unknown()";
   let out = base(schema);
   if (schema.nullable === true) out += ".nullable()";
@@ -42,7 +43,11 @@ function base(schema) {
       return "z.number()";
     case "boolean":
       return "z.boolean()";
+    case "null":
+      return "z.null()";
     case "array":
+      if (schema.prefixItems?.length)
+        return `z.tuple([${list(schema.prefixItems.map(render))}])`;
       return `z.array(${render(schema.items)})`;
     default:
       if (schema.properties) return object(schema);

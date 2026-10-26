@@ -154,3 +154,53 @@ test("schemas are named consistently and never shadow a global type", () => {
   assert.match(models, /export type Pet = \{\s*o\?: ObjectModel;/);
   assert.match(models, /export type ObjectModel = \{/);
 });
+
+test("an anyOf with a null branch is a nullable union, not unknown", () => {
+  const { files, problems } = emit(
+    {
+      openapi: "3.1.0",
+      paths: {},
+      components: {
+        schemas: {
+          A: {
+            type: "object",
+            properties: {
+              id: { anyOf: [{ type: "string" }, { type: "null" }] },
+            },
+          },
+        },
+      },
+    },
+    options(),
+    "x",
+  );
+  assert.match(files.get("models.ts"), /id\?: string \| null/);
+  assert.deepEqual(problems, []);
+});
+
+test("prefixItems is a tuple, in the model and in the validator", () => {
+  const doc = {
+    openapi: "3.1.0",
+    paths: {},
+    components: {
+      schemas: {
+        P: {
+          type: "object",
+          properties: {
+            xy: {
+              type: "array",
+              prefixItems: [{ type: "number" }, { type: "number" }],
+            },
+          },
+        },
+      },
+    },
+  };
+  const { files, problems } = emit(doc, options({ zod: true }), "x");
+  assert.match(files.get("models.ts"), /xy\?: \[number, number\]/);
+  assert.match(
+    files.get("schemas.ts"),
+    /xy: z\.tuple\(\[z\.number\(\), z\.number\(\)\]\)\.optional\(\)/,
+  );
+  assert.deepEqual(problems, []);
+});
