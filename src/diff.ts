@@ -173,9 +173,14 @@ export function contractOf(doc: OpenApiDocument): {
 
 // ── Comparing two contracts ───────────────────────────────────────────────
 
-const hookNames = (operation: { name: string; method: string }): string => {
+const hookNames = (
+  operation: { name: string; method: string },
+  prefix: string,
+): string => {
   const base = pascalCase(operation.name);
-  return operation.method === "GET" ? `use${base}Query` : `use${base}Mutation`;
+  return operation.method === "GET"
+    ? `${prefix}${base}Query`
+    : `${prefix}${base}Mutation`;
 };
 
 function finding(
@@ -395,10 +400,14 @@ function diffSchema(
   return out;
 }
 
-/** Every finding between two parsed documents, most severe first. */
+/**
+ * Every finding between two parsed documents, most severe first. `prefix` is
+ * the hook-name prefix of the library in use (`use`, `create` or `inject`).
+ */
 export function diffDocuments(
   oldDoc: OpenApiDocument,
   newDoc: OpenApiDocument,
+  prefix = "use",
 ): Finding[] {
   const before = contractOf(oldDoc);
   const after = contractOf(newDoc);
@@ -410,7 +419,7 @@ export function diffDocuments(
     const at = {
       operation: key,
       name: operation.name,
-      hook: hookNames({ ...operation, method }),
+      hook: hookNames({ ...operation, method }, prefix),
     };
     if (!previous) {
       findings.push(finding("safe", "operation-added", at, "added"));

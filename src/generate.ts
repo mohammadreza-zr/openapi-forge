@@ -7,15 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import { emit } from "./emit.js";
 import { loadInput } from "./load/services.js";
-import {
-  CLIENT_TS,
-  HOOKS_TS,
-  INFINITE_HOOK_TS,
-  INFINITE_TYPES_TS,
-  OPTION_TYPES_IMPORT,
-  OPTION_TYPES_TS,
-  TYPES_TS,
-} from "./runtime/templates.js";
+import { runtimeFiles } from "./runtime/index.js";
 import type { ForgeOptions, Problem, RunResult } from "./types.js";
 
 /** The parts of prettier this uses; it is an optional peer dependency. */
@@ -113,44 +105,6 @@ function reportProblems(problems: Problem[], verbose: boolean): void {
     console.warn(
       `  … ${problems.length - shown.length} more (--verbose lists all)`,
     );
-}
-
-/** The built-in client's files — only the ones the target needs. */
-function runtimeFiles(options: ForgeOptions): Map<string, string> {
-  const hooks = options.target === "hooks";
-  const infinite = hooks && options.infinite;
-  let types = TYPES_TS;
-  let hookSource = HOOKS_TS;
-  if (hooks) {
-    const imports = infinite
-      ? OPTION_TYPES_IMPORT.replace(
-          "  QueryKey,",
-          "  InfiniteData,\n  QueryKey,\n  UseInfiniteQueryOptions,",
-        )
-      : OPTION_TYPES_IMPORT;
-    types =
-      types.replace(
-        "\n/** What every answer",
-        `${imports}\n/** What every answer`,
-      ) +
-      OPTION_TYPES_TS +
-      (infinite ? INFINITE_TYPES_TS : "");
-  }
-  if (infinite) {
-    hookSource =
-      hookSource
-        .replace("  useMutation,", "  useInfiniteQuery,\n  useMutation,")
-        .replace(
-          'import type { ApiMutationOptions, ApiQueryOptions } from "./types";',
-          'import type {\n  ApiInfiniteQueryOptions,\n  ApiListData,\n  ApiMutationOptions,\n  ApiQueryOptions,\n} from "./types";',
-        ) + INFINITE_HOOK_TS;
-  }
-  const files = new Map([
-    ["types.ts", types],
-    ["client.ts", CLIENT_TS],
-  ]);
-  if (hooks) files.set("hooks.ts", hookSource);
-  return files;
 }
 
 export async function generate(

@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 
 import { fetchText } from "./load/source.js";
 import { diffDocuments, renderReport } from "./diff.js";
+import { LIBRARIES } from "./runtime/libraries/index.js";
 import type { ForgeOptions } from "./types.js";
 
 const TAG = "openapi-forge";
@@ -73,7 +74,11 @@ export async function pull(
       `${TAG}: ${name} ${current === text ? "unchanged" : current === null ? "added" : "updated"}`,
     );
     if (current !== null && current !== text) {
-      const findings = diffDocuments(parseYaml(current), parseYaml(text));
+      const findings = diffDocuments(
+        parseYaml(current),
+        parseYaml(text),
+        LIBRARIES[options.library].prefix,
+      );
       if (findings.length)
         console.log(renderReport(findings, "text", { title: name }));
     }

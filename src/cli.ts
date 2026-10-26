@@ -15,6 +15,7 @@ import {
   renderReport,
 } from "./diff.js";
 import { readDocument } from "./load/source.js";
+import { LIBRARIES, LIBRARY_NAMES } from "./runtime/libraries/index.js";
 import { parseSourcePairs, pull } from "./pull.js";
 
 const HELP = `openapi-forge — a typed API layer from OpenAPI / Swagger documents
@@ -33,8 +34,11 @@ Options
   --api-prefix <path>    prefix stripped from emitted routes (e.g. /api/v1)
   --tags a,b             emit only these tags
   --exclude-tags a,b     skip these tags
-  --target <hooks|requests>   React Query hooks too, or request functions only
-  --client <builtin|custom>   write a fetch runtime, or use your own transport
+  --target <hooks|requests>   hooks too, or request functions only
+  --library <name>       the library the hooks wrap: react-query (default), vue-query,
+                         svelte-query, solid-query, angular-query, swr
+  --http <fetch|axios>   what the built-in runtime sends requests with
+  --client <builtin|custom>   write a runtime, or use your own transport
   --headers "K: v;K2: v" request headers for a URL input
   --insecure             skip TLS verification (local dev only, never in CI)
   --ca <file.pem>        trust this CA certificate for an https URL
@@ -72,8 +76,14 @@ export default defineConfig({
   // your own transport — see the README for the \`runtime\` it needs.
   client: "builtin",
 
-  // "hooks" adds React Query hooks and key factories; "requests" stops at functions.
+  // "hooks" adds hooks and key factories; "requests" stops at functions.
   target: "hooks",
+
+  // The library the hooks wrap: "react-query", "vue-query", "svelte-query",
+  // "solid-query", "angular-query" or "swr". With the built-in runtime,
+  // "fetch" or "axios" sends the requests.
+  library: "react-query",
+  http: "fetch",
 
   // tags: { include: [], exclude: [] },
   // sources: { users: "https://host/users/openapi.yaml" },   // for \`openapi-forge pull\`
@@ -107,6 +117,8 @@ function parseCommandLine() {
         tags: { type: "string" },
         "exclude-tags": { type: "string" },
         target: { type: "string" },
+        library: { type: "string" },
+        http: { type: "string" },
         client: { type: "string" },
         headers: { type: "string" },
         insecure: { type: "boolean" },
@@ -190,7 +202,9 @@ async function main() {
         readDocument(location, { headers, tls, cwd }),
       ),
     );
-    const findings = diffDocuments(oldDoc, newDoc);
+    const { config } = await loadConfigFile(cwd, values.config);
+    const library = choice("library", values.library, LIBRARY_NAMES) ?? config.library ?? "react-query";
+    const findings = diffDocuments(oldDoc, newDoc, LIBRARIES[library].prefix);
     process.stdout.write(
       renderReport(
         findings,
@@ -223,6 +237,9 @@ async function main() {
   if (values["api-prefix"] !== undefined) cli.apiPrefix = values["api-prefix"];
   if (values.target)
     cli.target = choice("target", values.target, ["hooks", "requests"]);
+  if (values.library)
+    cli.library = choice("library", values.library, LIBRARY_NAMES);
+  if (values.http) cli.http = choice("http", values.http, ["fetch", "axios"]);
   if (values.client)
     cli.client = choice("client", values.client, ["builtin", "custom"]);
   if (values.tags || values["exclude-tags"]) {

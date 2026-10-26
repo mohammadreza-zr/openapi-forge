@@ -5,9 +5,9 @@ Generate a typed TypeScript API layer from OpenAPI / Swagger documents:
 - **models** — one `type` per schema (inline objects named, `allOf` / `oneOf` / `nullable`, enums, `Blob` for uploads)
 - **request functions** — one per operation, with typed path / query / body arguments
 - **route + query-key factories** — each URL is written once; keys point at it
-- **React Query hooks** — `useXQuery` for reads, `useXMutation` for writes (optional)
+- **hooks for the library you use** — React, Vue, Svelte, Solid or Angular Query, or SWR: a query hook per read, a mutation hook per write (optional)
 - **several services, one layer** — merge many documents; conflicts are decided once and committed
-- **a runtime of its own, or yours** — a small fetch client is written for you, or the code imports your transport
+- **a runtime of its own, or yours** — a small `fetch` or axios client is written for you, or the code imports your transport
 
 Output is deterministic and prettier-formatted, so `--check` can fail CI when the committed layer is stale.
 
@@ -21,7 +21,7 @@ npx openapi-forge --input swagger.json --out src/api/generated --api-prefix /api
 
 With the default `client: "builtin"` three small files are written **once** next to the layer
 (`client.ts`, `hooks.ts`, `types.ts`). They are yours to edit and are never overwritten
-(`--force-runtime` resets them). The hooks need `@tanstack/react-query` v5.
+(`--force-runtime` resets them). The hooks need the package of the library they wrap — `@tanstack/react-query` v5 by default, see [Clients](#clients).
 
 ```ts
 import { configureClient } from "./api/generated/client";
@@ -37,6 +37,47 @@ const create = useCreatePetMutation();
 create.mutate({ body: { name: "Tom" } });
 ```
 
+## Clients
+
+Two independent choices. `library` is what the hooks wrap; `http` is what the built-in runtime sends requests with.
+
+```js
+export default defineConfig({
+  library: "vue-query",   // see the table
+  http: "axios",          // "fetch" (default) | "axios"
+  target: "hooks",        // "requests" stops at plain request functions
+});
+```
+
+| `library` | hooks | arguments | packages the runtime imports |
+| --- | --- | --- | --- |
+| `react-query` (default) | `useXQuery`, `useXMutation` | plain values | `@tanstack/react-query` |
+| `vue-query` | `useXQuery`, `useXMutation` | a value, a ref or a getter | `@tanstack/vue-query`, `vue` |
+| `svelte-query` | `createXQuery`, `createXMutation` | a value or a getter | `@tanstack/svelte-query` (v6, Svelte 5) |
+| `solid-query` | `createXQuery`, `createXMutation` | a value or an accessor | `@tanstack/solid-query`, `solid-js` |
+| `angular-query` | `injectXQuery`, `injectXMutation` | a value or a getter (a signal read) | `@tanstack/angular-query-experimental`, `@angular/core` |
+| `swr` | `useXQuery`, `useXMutation` | plain values | `swr`, `react` |
+
+In the four reactive libraries an argument is read where the request is made, not once when the hook is called, so the query follows whatever it was given:
+
+```ts
+const id = ref("1");
+const pet = useGetPetQuery(id);          // Vue: refetches when `id.value` changes
+const pet = createGetPetQuery(() => id()); // Solid / Svelte / Angular: a getter
+```
+
+A path id that is still `undefined` makes the query wait instead of asking for `/pets/undefined`. Mutations take their variables when `mutate` is called, so they are the same in every library.
+
+Coming from Orval, its `client` values map like this: `react-query`, `vue-query`, `svelte-query`, `solid-query`, `angular-query` and `swr` are the `library` values above; `fetch` and `axios` are `target: "requests"` with `http: "fetch"` or `"axios"`; `zod` is `zod: true`. Not covered: Angular `HttpClient` services, `hono`, `mcp`, MSW / Faker mocks, and Suspense variants of the hooks.
+
+Notes that follow from what each library offers:
+
+- **SWR** cannot cancel a request, so the `signal` a fetcher gets never fires; an infinite list asks for page `n` at `n * pageSize`.
+- **Solid**: the hook options leave out `initialData` — `createQuery` has one overload for options that set it and one for options that do not, and options that may do either match neither.
+- **Svelte**: a mutation's requests are not aborted when the component goes (Svelte has no way to ask whether there is a component to clean up with).
+- **Angular**: `inject…` functions need an injection context — a constructor, a field initialiser, a service, `runInInjectionContext`.
+- **axios**: the instance is `configureClient({ instance })`; interceptors and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so the two behave alike.
+
 ## Commands
 
 | command | does |
@@ -48,7 +89,7 @@ create.mutate({ body: { name: "Tom" } });
 | `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
 
 Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
-`--target hooks|requests`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
+`--target hooks|requests`, `--library <name>`, `--http fetch|axios`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
 `--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`, `--watch`, `--interval <s>`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`.
 Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`,
 `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
@@ -67,6 +108,8 @@ export default defineConfig({
   apiPrefix: "/api/v1",           // stripped from every route
   client: "builtin",              // "builtin" | "custom"
   target: "hooks",                // "hooks" | "requests"
+  library: "react-query",         // "vue-query" | "svelte-query" | "solid-query" | "angular-query" | "swr"
+  http: "fetch",                  // "axios" — for the built-in runtime
   tags: { include: [], exclude: [] },
   headers: { Authorization: "Bearer …" },   // for a URL input
   tls: { insecure: false, ca: "internal-ca.pem" },
@@ -97,8 +140,8 @@ export default defineConfig({
   client: "custom",
   runtime: {
     callers: { module: "@/lib/http", get: "apiGet", post: "apiPost", put: "apiPut", patch: "apiPatch", delete: "apiDelete" },
-    hooks: { module: "../hooks", query: "useApiQuery", mutation: "useApiMutation" },
-    types: { module: "../types", request: "GeneratedRequestConfig", query: "ApiQueryOptions", mutation: "ApiMutationOptions" },
+    hooks: { module: "../hooks", query: "useApiQuery", mutation: "useApiMutation", toValue: "toValue" },
+    types: { module: "../types", request: "GeneratedRequestConfig", query: "ApiQueryOptions", mutation: "ApiMutationOptions", maybeGetter: "MaybeGetter" },
     list: { name: "ApiListData", module: "@/types", count: "count", items: "list" },   // or false
     envelope: { name: "ApiEnvelope", module: "../../types/api", result: "result", data: "data", keys: ["result", "code", "message", "data"] }, // or false
     requestKeys: { query: "params", pathParams: "addTemplateToUrl", formData: "isFormData", baseUrl: "baseUrl", signal: "signal" },
@@ -108,7 +151,10 @@ export default defineConfig({
 ```
 
 Module paths are written as-is into the generated files, so paths relative to the output folder
-must be relative to it.
+must be relative to it. `library` still decides how the generated hooks are named (`use…`, `create…`,
+`inject…`) and whether they read their arguments through `toValue` / `MaybeGetter` (the reactive
+libraries) — a custom runtime has to export those two names then, and its wrappers are named
+`<prefix>ApiQuery` by default.
 
 The transport contract is `apiGet<T>(route, config)`, `apiPost<T>(route, body, config)` (also put /
 patch), `apiDelete<T>(route, config)`, where `config` carries `signal`, `params` (query),
@@ -130,7 +176,9 @@ What a document leaves out never breaks the output: that spot is typed `unknown`
 
 ## Tested against real documents
 
-`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — and type-checks the output with `tsc --strict`. All 60 pass.
+`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 7 clients × 61 documents pass.
+
+The behaviour is run too, not only compiled (`npm test`): the `fetch` and axios clients are called against a local HTTP server (query strings, path encoding, JSON and multipart bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort); the React Query, SWR, Vue Query and Solid Query hooks are executed against the same kind of server — data arrives, a changed argument or ref moves the query, a missing id waits, a mutation sends its variables, an infinite list pages. Svelte Query and Angular Query output is type-checked only: their packages need a Svelte compiler and an Angular test bed that are not wired in here.
 
 ## How it compares
 
@@ -138,7 +186,7 @@ Measured, not claimed: the same 60 documents through Orval 8.45 (`--client react
 
 | | openapi-forge | Orval |
 | --- | --- | --- |
-| Targets | fetch or your own transport, React Query | axios, fetch, Angular, SWR, Vue, Svelte, Solid, … |
+| Clients | `fetch` or axios, or your own transport; React, Vue, Svelte, Solid and Angular Query, SWR | the same, plus Angular `HttpClient` services, Hono, MCP |
 | Mocks (MSW), Faker | no, by design | yes |
 | What changed in the new spec | `pull` and `diff` report breaking / risky / safe changes by hook name | not built in |
 | Several backend services in one layer | merged; conflicts decided once and committed | a separate output per spec |
@@ -147,7 +195,7 @@ Measured, not claimed: the same 60 documents through Orval 8.45 (`--client react
 | Stale-output check for CI | `--check` | via re-run and `git diff` |
 | Setup check | `doctor` | not built in |
 
-Orval is the broader tool — more clients, mocks, a large plugin ecosystem. This one is deliberately narrower: a typed React Query layer you can read, review and keep in sync with several services.
+Orval is the broader tool — Angular `HttpClient` services, server targets, mocks, a large plugin ecosystem. This one stays with the data layer of an application: typed models, request functions and hooks you can read, review and keep in sync with several services.
 
 ## Opt-in extras
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Clients: `library` picks the hooks — `react-query` (default), `vue-query`, `svelte-query`, `solid-query`, `angular-query`, `swr` — and `http` picks what the built-in runtime sends with — `fetch` (default) or `axios`. The reactive libraries read each hook argument where the request is made, so a ref, a signal or a getter keeps the query in step.
+- `--library` and `--http`; `doctor` looks for the packages the chosen client imports; `diff` and `pull` name hooks the way the library does.
+- `npm run conformance` is a client × document matrix (7 × 61); the `fetch` / axios clients and the React Query, SWR, Vue Query and Solid Query hooks are run against a local server in `npm test`.
 - Rewritten in strict TypeScript: the package ships `dist/` with `.d.ts` files, and `run`, `emit`, `generate`, `defineConfig` and the config types are typed.
 
 ## 0.2.0

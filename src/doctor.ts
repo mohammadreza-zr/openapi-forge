@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
 import { loadInput } from "./load/services.js";
+import { LIBRARIES } from "./runtime/libraries/index.js";
 import type {
   Check,
   ForgeOptions,
@@ -94,10 +95,12 @@ async function checkDependencies(
   const has = (name: string): boolean =>
     name in
     { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies };
+  const builtin = options.client === "builtin";
   const needs = [
-    ...(options.target === "hooks" && options.client === "builtin"
-      ? ["@tanstack/react-query"]
+    ...(options.target === "hooks" && builtin
+      ? LIBRARIES[options.library].packages
       : []),
+    ...(builtin && options.http === "axios" ? ["axios"] : []),
     ...(options.zod ? ["zod"] : []),
   ];
   const results = needs.map((name) =>

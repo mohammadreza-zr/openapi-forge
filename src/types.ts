@@ -83,6 +83,18 @@ export type HttpMethod = "get" | "put" | "post" | "patch" | "delete";
 
 // ── Options ───────────────────────────────────────────────────────────────
 
+/** The data-fetching library the generated hooks wrap. */
+export type LibraryName =
+  | "react-query"
+  | "vue-query"
+  | "svelte-query"
+  | "solid-query"
+  | "angular-query"
+  | "swr";
+
+/** What the built-in runtime sends its requests with. */
+export type HttpClientName = "fetch" | "axios";
+
 export interface RuntimeConfig {
   callers: {
     module: string;
@@ -92,13 +104,22 @@ export interface RuntimeConfig {
     patch: string;
     delete: string;
   };
-  hooks: { module: string; query: string; mutation: string; infinite: string };
+  hooks: {
+    module: string;
+    query: string;
+    mutation: string;
+    infinite: string;
+    /** Reads a hook argument given as a ref, signal or getter; reactive libraries only. */
+    toValue: string;
+  };
   types: {
     module: string;
     request: string;
     query: string;
     mutation: string;
     infinite: string;
+    /** `T | ref | getter`, the type of a hook argument; reactive libraries only. */
+    maybeGetter: string;
   };
   /** The `{ count, list }` shape of a paged answer; `false` turns it off. */
   list:
@@ -181,8 +202,12 @@ export interface ForgeConfig {
   apiPrefix?: string;
   /** `"builtin"` writes a fetch runtime once; `"custom"` uses `runtime`. */
   client?: "builtin" | "custom";
-  /** `"hooks"` adds React Query hooks and key factories. */
+  /** `"hooks"` adds the hooks of `library` and key factories. */
   target?: "hooks" | "requests";
+  /** The library the hooks wrap; it decides their names and how they read arguments. */
+  library?: LibraryName;
+  /** What the built-in runtime sends requests with. */
+  http?: HttpClientName;
   tags?: { include?: string | string[]; exclude?: string | string[] };
   /** Adds an infinite-list hook to paged reads; names the paging parameters. */
   infinite?: boolean | { start?: string; size?: string };
@@ -208,6 +233,8 @@ export interface ForgeOptions {
   apiPrefix: string;
   client: "builtin" | "custom";
   target: "hooks" | "requests";
+  library: LibraryName;
+  http: HttpClientName;
   tags: { include: string[]; exclude: string[] };
   infinite: false | { start: string; size: string };
   zod: boolean;
