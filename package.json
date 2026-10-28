@@ -28,7 +28,7 @@
   },
   "type": "module",
   "bin": {
-    "openapi-forge": "./dist/cli.js"
+    "openapi-forge": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
