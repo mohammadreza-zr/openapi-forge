@@ -81,7 +81,9 @@ describe("the code that is written", () => {
   });
 
   test("a DELETE takes its body through the config; a custom transport without a key skips it", () => {
-    const text = edgesTs();
+    const text = edgesTs({ http: "fetch" });
+    // The default client, @mrzr/api-client, has a `delete` with no body.
+    assert.doesNotMatch(edgesTs(), /function remove\(/);
     assert.match(text, /export function remove\(\s*body: RemoveBody,/);
     assert.match(text, /apiDelete<null>\(\s*edgesEndpoints\.remove,\s*\{[^}]*body: body,/s);
     const custom = written({ client: "custom" });

@@ -97,7 +97,7 @@ export const DEFAULTS: ForgeOptions = {
   /** The data-fetching library the hooks wrap. */
   library: "react-query",
   /** What the built-in runtime sends its requests with. */
-  http: "fetch",
+  http: "api-client",
   tags: { include: [], exclude: [] },
   /**
    * `true` adds an infinite-list hook to every read that returns the paged
@@ -216,11 +216,12 @@ export function resolveOptions(
     }
   }
   // `@mrzr/api-client`'s `delete` takes no body, so a DELETE with one is left out.
-  if (
-    merged.client === "builtin" &&
-    merged.http === "api-client" &&
-    named("body") === undefined
-  ) {
+  if (merged.client === "builtin" && merged.http === "api-client") {
+    if (named("body") !== undefined) {
+      throw new Error(
+        'openapi-forge: runtime.requestKeys.body cannot be set with http: "api-client" — its delete takes no body. Use http: "fetch", "axios" or "angular".',
+      );
+    }
     merged.runtime.requestKeys.body = false;
   }
   if (!["builtin", "custom"].includes(merged.client)) {

@@ -7,7 +7,7 @@ Generate a typed TypeScript API layer from OpenAPI / Swagger documents:
 - **route + query-key factories** — each URL is written once; keys point at it
 - **hooks for the library you use** — React, Vue, Svelte, Solid or Angular Query, or SWR: a query hook per read, a mutation hook per write (optional)
 - **several services, one layer** — merge many documents; conflicts are decided once and committed
-- **a runtime of its own, or yours** — a small `fetch`, axios, Angular `HttpClient` or [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) client is written for you, or the code imports your transport
+- **a runtime of its own, or yours** — a small client over [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (the default), `fetch`, axios or Angular `HttpClient` is written for you, or the code imports your transport
 
 Output is deterministic and prettier-formatted, so `--check` can fail CI when the committed layer is stale.
 
@@ -24,18 +24,19 @@ With the default `client: "builtin"` three small files are written **once** next
 (`--force-runtime` resets them). The hooks need the package of the library they wrap — `@tanstack/react-query` v5 by default, see [Clients](#clients).
 
 ```ts
+import { createClient } from "@mrzr/api-client";
 import { configureClient } from "./api/generated/client";
 import { useListPetsQuery, useCreatePetMutation } from "./api/generated";
 
-configureClient({
-  baseUrl: "https://api.example.com/v1",
-  headers: () => ({ Authorization: `Bearer ${token()}` }),
-});
+// The default client sends with @mrzr/api-client: the instance holds the base URL, the tokens and the plugins.
+configureClient({ instance: createClient({ baseUrl: "https://api.example.com/v1" }) });
 
 const pets = useListPetsQuery({ kind: "cat" });
 const create = useCreatePetMutation();
 create.mutate({ body: { name: "Tom" } });
 ```
+
+Without `@mrzr/api-client`, pick another client (`http: "fetch"` needs nothing installed) and configure it with `configureClient({ baseUrl, headers: () => ({ Authorization: … }) })`.
 
 ## Clients
 
@@ -44,7 +45,7 @@ Two independent choices. `library` is what the hooks wrap; `http` is what the bu
 ```js
 export default defineConfig({
   library: "vue-query",   // see the table
-  http: "axios",          // "fetch" (default) | "axios" | "angular" | "api-client"
+  http: "axios",          // "api-client" (default) | "fetch" | "axios" | "angular"
   target: "hooks",        // "requests" stops at plain request functions
 });
 ```
@@ -70,10 +71,10 @@ A path id that is still `undefined` makes the query wait instead of asking for `
 
 | `http` | sends with | needs |
 | --- | --- | --- |
-| `fetch` (default) | the platform's `fetch` | nothing |
+| `api-client` (default) | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client): token refresh, tab sync, plugins; `configureClient({ instance: createClient({ … }) })` | `@mrzr/api-client` |
+| `fetch` | the platform's `fetch` | nothing |
 | `axios` | an axios instance, `configureClient({ instance })` | `axios` |
 | `angular` | Angular's `HttpClient`, so its interceptors apply; `configureClient({ instance: inject(HttpClient) })` at start-up | `@angular/common`, `rxjs` |
-| `api-client` | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client): token refresh, tab sync, plugins; `configureClient({ instance: createClient({ … }) })` | `@mrzr/api-client` |
 
 Coming from Orval, its `client` values map like this: `react-query`, `vue-query`, `svelte-query`, `solid-query`, `angular-query` and `swr` are the `library` values above; `fetch`, `axios` and `angular` are `http` values (with `target: "requests"` for plain functions); `zod` is `zod: true`.
 
@@ -84,7 +85,7 @@ Notes that follow from what each library offers:
 - **SWR** cannot cancel a request, so the `signal` a fetcher gets never fires; an infinite list asks for page `n` at `n * pageSize`.
 - **Solid**: the hook options leave out `initialData` — `createQuery` has one overload for options that set it and one for options that do not, and options that may do either match neither.
 - **Angular**: `inject…` functions need an injection context — a constructor, a field initialiser, a service, `runInInjectionContext`.
-- **axios**, **angular** and **api-client**: the instance is `configureClient({ instance })`; interceptors, plugins, tokens and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so the three behave alike. An aborted request rejects in every client, but with the client's own error: `AbortError` for `fetch`, `CanceledError` for axios (`axios.isCancel`).
+- **axios**, **angular** and **api-client**: the instance is `configureClient({ instance })`; interceptors, plugins, tokens and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so all four behave alike. An aborted request rejects in every client, but with the client's own error: `AbortError` for `fetch`, `CanceledError` for axios (`axios.isCancel`).
 
 ## Commands
 
@@ -117,7 +118,7 @@ export default defineConfig({
   client: "builtin",              // "builtin" | "custom"
   target: "hooks",                // "hooks" | "requests"
   library: "react-query",         // "vue-query" | "svelte-query" | "solid-query" | "angular-query" | "swr"
-  http: "fetch",                  // "axios" | "angular" | "api-client" — for the built-in runtime
+  http: "api-client",             // "fetch" | "axios" | "angular" — for the built-in runtime
   tags: { include: [], exclude: [] },
   headers: { Authorization: "Bearer …" },   // for a URL input
   tls: { insecure: false, ca: "internal-ca.pem" },
@@ -196,7 +197,7 @@ The built-in client writes what the document asks for, and reports (never silent
 | a query list | repeated keys, `a=1&a=2`; `explode: false` and `pipeDelimited` / `spaceDelimited` are reported |
 | a query object | `a[b]=1` (deepObject); another style is reported |
 | a path list or object | `a,b` / `name,value,name,value` |
-| a body on `DELETE` | sent, from `config.body` |
+| a body on `DELETE` | sent, from `config.body` — except by `api-client`, whose `delete` takes none: the operation is left out and listed |
 | `multipart/form-data` | one part per list item, a JSON part per object, a file as it is |
 | `application/x-www-form-urlencoded` | a form; a list repeats its key |
 | `text/plain`, `application/octet-stream`, other non-JSON bodies | sent as they are, with that `Content-Type` |
@@ -296,7 +297,7 @@ const { files } = emit(doc, resolvedOptions, "swagger.json");          // name �
 ## Notes
 
 - Names come from `operationId` (or `method + path`), collisions get the method appended.
-- A `DELETE` that takes a body sends it; a `GET` that declares one cannot, so the body is left out with a warning.
+- A `DELETE` that takes a body sends it with `fetch`, axios and Angular's `HttpClient`; `@mrzr/api-client`'s `delete` takes no body, so under the default `http` that operation is left out and listed under "things to look at" (pick another `http` to send it). A `GET` that declares a body cannot be sent, so the body is left out with a warning.
 - A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows.
 - Prettier is optional: the project's own is used when installed (with its config); otherwise output is raw.
 - Tests: `npm test` (builds, then runs the suite on Node 20, 22 and 24 alike); `npm run typecheck` checks the types only.

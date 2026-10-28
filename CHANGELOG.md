@@ -2,6 +2,7 @@
 
 ## 0.2.0
 
+- **The default `http` is `"api-client"`** (it was going to be `fetch`): a project that does not name one now gets a client over [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) and needs that package. `http: "fetch"` is still there and needs nothing; the three runtime files are written once, so a layer already generated keeps its `client.ts`. A `DELETE` operation with a body is left out under the default (see below), where `fetch` sends it.
 - `http: "api-client"` (`--http api-client`): the built-in runtime sends with [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client), so its token refresh, tab sync and plugins apply — `configureClient({ instance: createClient({ … }) })`, the way axios and Angular take theirs. Bodies and answers are handled by the same code as in the other clients. Its `delete` takes no body, so a `DELETE` operation with one is left out and reported. This replaces the adapter the 0.1.0 README showed for a custom transport.
 - `doctor` looks for `@mrzr/api-client` when it is the chosen client; the conformance matrix is 9 clients × 62 documents, and every hook library is run over it.
 

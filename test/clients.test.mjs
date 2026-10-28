@@ -181,8 +181,15 @@ test("requests only needs no library", () => {
   }
 });
 
-test("http picks what the built-in client sends with", () => {
-  const fetchClient = runtimeFiles(resolveOptions()).get("client.ts");
+test("http picks what the built-in client sends with; the default is @mrzr/api-client", () => {
+  assert.equal(resolveOptions().http, "api-client");
+  assert.equal(
+    runtimeFiles(resolveOptions()).get("client.ts"),
+    runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts"),
+  );
+  const fetchClient = runtimeFiles(resolveOptions({ http: "fetch" })).get(
+    "client.ts",
+  );
   const axiosClient = runtimeFiles(resolveOptions({ http: "axios" })).get(
     "client.ts",
   );
@@ -312,11 +319,22 @@ test("doctor looks for the library's packages and the transport's", async () => 
   );
 });
 
-test("api-client's delete takes no body, so a DELETE with one is left out unless the project says otherwise", () => {
+test("api-client's delete takes no body, so a DELETE with one is left out and the key cannot be named", () => {
   assert.equal(resolveOptions({ http: "api-client" }).runtime.requestKeys.body, false);
   assert.equal(resolveOptions({ http: "fetch" }).runtime.requestKeys.body, "body");
+  // The built-in transport would drop the body without a word, so naming a key is an error.
+  assert.throws(
+    () =>
+      resolveOptions({
+        http: "api-client",
+        runtime: { requestKeys: { body: "data" } },
+      }),
+    /requestKeys\.body cannot be set with http: "api-client"/,
+  );
+  // A custom transport is the project's own: it may name the key.
   assert.equal(
     resolveOptions({
+      client: "custom",
       http: "api-client",
       runtime: { requestKeys: { body: "data" } },
     }).runtime.requestKeys.body,

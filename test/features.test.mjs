@@ -110,6 +110,10 @@ test("doctor reports a missing input and passes a good one", async () => {
   });
   assert.ok(missing.some((item) => item.level === "fail"));
 
+  await writeFile(
+    join(cwd, "package.json"),
+    JSON.stringify({ dependencies: { "@mrzr/api-client": "3" } }),
+  );
   await writeFile(join(cwd, "api.json"), JSON.stringify(paged()));
   const good = await doctor(
     options({ input: "api.json", target: "requests", format: false }),
