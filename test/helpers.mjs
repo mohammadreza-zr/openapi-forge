@@ -19,3 +19,9 @@ export const clients = () => parse(readFileSync(CLIENTS_FIXTURE, "utf8"));
 /** Options as a run would resolve them; raw output, so no prettier is needed. */
 export const options = (patch = {}) =>
   resolveOptions({ apiPrefix: "/api/v1", format: false }, patch);
+
+/** What the transport must get right: payloads that look like envelopes, headers, forms, bytes, lists. */
+export const EDGES_FIXTURE = fileURLToPath(
+  new URL("./fixtures/edges.yaml", import.meta.url),
+);
+export const edges = () => parse(readFileSync(EDGES_FIXTURE, "utf8"));

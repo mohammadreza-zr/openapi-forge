@@ -230,12 +230,12 @@ test("the angular client sends through the HttpClient it is given", () => {
   assert.doesNotMatch(client, /await fetch\(|axios/);
 });
 
-test("only the clients that read a body as text define how", () => {
-  const readsBody = (http) =>
-    runtimeFiles(resolveOptions({ http }))
-      .get("client.ts")
-      .includes("function readBody");
-  assert.deepEqual(HTTP_CLIENTS.filter(readsBody), ["fetch", "angular"]);
+test("every client hands back bytes and reads them the same way", () => {
+  for (const http of HTTP_CLIENTS) {
+    const client = runtimeFiles(resolveOptions({ http })).get("client.ts");
+    assert.equal(client.match(/function readBody/g)?.length, 1, http);
+    assert.match(client, /bytes:/, http);
+  }
 });
 
 test("an unknown library or http client is named", () => {

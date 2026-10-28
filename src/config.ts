@@ -60,6 +60,7 @@ export const builtinRuntime = (library: LibraryName): RuntimeConfig => ({
     module: "./types",
     count: "count",
     items: "list",
+    assumeRequired: false,
   },
   /** The `{ result, data, … }` wrapper every answer has. `false` for none. */
   envelope: {
@@ -76,6 +77,9 @@ export const builtinRuntime = (library: LibraryName): RuntimeConfig => ({
     formData: "isFormData",
     baseUrl: "baseUrl",
     signal: "signal",
+    headers: "headers",
+    envelope: "isEnvelope",
+    body: "body",
   },
   /** How a service's base URL is spelled in `services.ts`. */
   services: { module: undefined, fn: undefined, baseUrls: {} },
@@ -201,6 +205,16 @@ export function resolveOptions(
   }
   const base = { ...DEFAULTS, runtime: builtinRuntime(library) };
   const merged = merge(merge(base, fileConfig), cliOptions);
+  // A custom transport knows nothing of the keys the built-in one reads, so
+  // they are only written for it when the project names them.
+  if (merged.client === "custom") {
+    for (const key of ["headers", "envelope", "body"] as const) {
+      const named =
+        cliOptions.runtime?.requestKeys?.[key] ??
+        fileConfig.runtime?.requestKeys?.[key];
+      if (named === undefined) merged.runtime.requestKeys[key] = false;
+    }
+  }
   if (!["builtin", "custom"].includes(merged.client)) {
     throw new Error(
       `openapi-forge: client must be "builtin" or "custom", not ${JSON.stringify(merged.client)}.`,

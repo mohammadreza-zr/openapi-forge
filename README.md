@@ -151,7 +151,7 @@ export default defineConfig({
     types: { module: "../types", request: "GeneratedRequestConfig", query: "ApiQueryOptions", mutation: "ApiMutationOptions", maybeGetter: "MaybeGetter" },
     list: { name: "ApiListData", module: "@/types", count: "count", items: "list" },   // or false
     envelope: { name: "ApiEnvelope", module: "../../types/api", result: "result", data: "data", keys: ["result", "code", "message", "data"] }, // or false
-    requestKeys: { query: "params", pathParams: "addTemplateToUrl", formData: "isFormData", baseUrl: "baseUrl", signal: "signal" },
+    requestKeys: { query: "params", pathParams: "addTemplateToUrl", formData: "isFormData", baseUrl: "baseUrl", signal: "signal", headers: "headers", envelope: "isEnvelope", body: "body" },
     services: { module: "@/config/api", fn: "serviceBaseUrl" },   // or { baseUrls: { users: "https://…" } }
   },
 });
@@ -166,14 +166,42 @@ libraries) — a custom runtime has to export those two names then, and its wrap
 The transport contract is `apiGet<T>(route, config)`, `apiPost<T>(route, body, config)` (also put /
 patch), `apiDelete<T>(route, config)`, where `config` carries `signal`, `params` (query),
 `addTemplateToUrl` (`{pet_id: "1"}` for `/pets/{pet_id}`), `isFormData` and `baseUrl`. Each resolves
-to the unwrapped payload.
+to the unwrapped payload. `headers` (declared header parameters, and the `Content-Type` of a body that
+is not JSON) and `isEnvelope` are written only for the built-in runtime, and so is `body`, the key a `DELETE`'s body
+rides in (`apiDelete(route, config)` takes none of its own); a custom transport gets them when
+`requestKeys.headers` / `requestKeys.envelope` / `requestKeys.body` name a key, and until then a header
+parameter is reported instead of being sent and a `DELETE` with a body is skipped with a warning.
 
 ### The envelope
 
-If every answer is `{ result, code, message, data }`, the generated types and calls speak only of
-`data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`, and a
-`{ count, list }` payload becomes `ApiListData<T>`. Set `runtime.envelope: false` / `runtime.list: false`
-for an API with neither.
+If an answer is `{ result, code, message, data }`, the generated types and calls speak only of
+`data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`. The decision is
+made per operation, from its response schema (it has `result` and `data`), and the request function says
+so with `isEnvelope: true` — the built-in client unwraps only those, so a payload that merely has a
+`result` field is returned as it is. A `{ count, list }` payload becomes `ApiListData<T>` only when
+the document marks both fields `required`; otherwise it keeps its own type, with optional fields, because
+`ApiListData` promises both are there. An API that always sends both can say so with
+`runtime: { list: { assumeRequired: true } }`. Set `runtime.envelope: false` / `runtime.list: false` for an API
+with neither.
+
+### What goes over the wire
+
+The built-in client writes what the document asks for, and reports (never silently changes) what it cannot:
+
+| the document says | the client |
+| --- | --- |
+| a `header` parameter | an argument (`headers`) of the request function, a hook argument and part of the query key; `Accept`, `Content-Type` and `Authorization` are the transport's, as OpenAPI says |
+| a `cookie` parameter | reported — a browser attaches cookies itself |
+| a query list | repeated keys, `a=1&a=2`; `explode: false` and `pipeDelimited` / `spaceDelimited` are reported |
+| a query object | `a[b]=1` (deepObject); another style is reported |
+| a path list or object | `a,b` / `name,value,name,value` |
+| a body on `DELETE` | sent, from `config.body` |
+| `multipart/form-data` | one part per list item, a JSON part per object, a file as it is |
+| `application/x-www-form-urlencoded` | a form; a list repeats its key |
+| `text/plain`, `application/octet-stream`, other non-JSON bodies | sent as they are, with that `Content-Type` |
+| an answer | read by its `Content-Type`: JSON parsed, `text/*` as a string, anything else a `Blob`; an empty answer is `null` |
+
+With the axios and Angular clients the answer reaches interceptors as bytes (an `ArrayBuffer`), because it is read by content type afterwards, the same way for every client.
 
 ## Input it understands
 
@@ -185,7 +213,7 @@ What a document leaves out never breaks the output: that spot is typed `unknown`
 
 `npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 8 clients × 61 documents pass.
 
-The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios and Angular `HttpClient` clients are called against a local HTTP server (query strings, path encoding, JSON and multipart bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort — and an interceptor, for Angular). Every hook library is executed against the same kind of server: React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument (ref, signal, getter, state) moves the query, a missing id waits, a mutation sends its variables, and tearing down the owner aborts a mutation still in flight; React Query, SWR and Vue Query also page an infinite list.
+The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios and Angular `HttpClient` clients are called against a local HTTP server (query strings, path encoding, JSON, multipart and form bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort, bytes and text answers, a payload with a `result` field — and an interceptor, for Angular). Every hook library is executed against the same kind of server: React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument (ref, signal, getter, state) moves the query, a missing id waits, a mutation sends its variables, and tearing down the owner aborts a mutation still in flight; React Query, SWR and Vue Query also page an infinite list.
 
 ## How it compares
 
@@ -216,7 +244,7 @@ export default defineConfig({
 });
 ```
 
-`zod` needs the `zod` package. `infinite` needs `useApiInfiniteQuery` and `ApiInfiniteQueryOptions` in a custom runtime (the built-in one writes them).
+`zod` needs the `zod` package. `infinite` needs `useApiInfiniteQuery` and `ApiInfiniteQueryOptions` in a custom runtime (the built-in one writes them). It applies to reads that answer `ApiListData` (so `count` and `list` must be `required`, see [the envelope](#the-envelope)) and take no path id; header parameters are arguments of the hook, as in any other read.
 
 ```bash
 openapi-forge --watch            # rebuild when a local document changes (a URL is polled: --interval 30)
@@ -267,7 +295,7 @@ const { files } = emit(doc, resolvedOptions, "swagger.json");          // name �
 ## Notes
 
 - Names come from `operationId` (or `method + path`), collisions get the method appended.
-- A `DELETE` that takes a body is skipped with a warning — the request functions cannot send one.
+- A `DELETE` that takes a body sends it; a `GET` that declares one cannot, so the body is left out with a warning.
 - A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows.
 - Prettier is optional: the project's own is used when installed (with its config); otherwise output is raw.
 - Tests: `npm test` (builds, then runs the suite); `npm run typecheck` checks the types only.

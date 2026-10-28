@@ -1,25 +1,18 @@
 # Changelog
 
-## Unreleased
-
-- Clients: `library` picks the hooks — `react-query` (default), `vue-query`, `svelte-query`, `solid-query`, `angular-query`, `swr` — and `http` picks what the built-in runtime sends with — `fetch` (default), `axios` or Angular's `HttpClient` (`angular`, interceptors apply). The reactive libraries read each hook argument where the request is made, so a ref, a signal or a getter keeps the query in step.
-- `--library` and `--http`; `doctor` looks for the packages the chosen client imports; `diff` and `pull` name hooks the way the library does.
-- `npm run conformance` is a client × document matrix (8 × 61); in `npm test` the three HTTP clients and all six hook libraries are run against a local server (data, reactive arguments, a missing id, mutations, infinite lists, abort on teardown).
-- Rewritten in strict TypeScript: the package ships `dist/` with `.d.ts` files, and `run`, `emit`, `generate`, `defineConfig` and the config types are typed.
-
-## 0.2.0
-
-- Swagger 2.0 input (converted to OpenAPI 3.0) and OpenAPI 3.1 spellings.
-- `openapi-forge diff` and a change report on `pull`: breaking / risky / safe, by hook name.
-- `zod: true` writes `schemas.ts`; `infinite: true` adds infinite-list hooks.
-- `--watch`, `doctor`.
-- Same-shaped query and variable types are written once (aliases, or `Omit<…> & {…}` when close).
-- A per-call `baseUrl` now wins over the service's default.
-- An incomplete document no longer produces broken output: unknown spots are typed `unknown` and listed.
-- Fixes found by the conformance corpus: schema names normalised and kept clear of global types, empty `models.ts`, array and object path parameters, `GET` with a body, `$ref`s into `paths`, imports of union text.
-- Found on two live backends (NestJS and FastAPI): an inline object no longer takes the name of a component or of another inline object; `type: null`, `additionalProperties: true` and `prefixItems` (tuples) are understood.
-- `npm run conformance`: 60 public documents generated and type-checked.
-
 ## 0.1.0
 
-- First release: models, request functions, key factories and React Query hooks; multi-service merge; `pull`; `--check`.
+First release.
+
+- Generates models, request functions, route and query-key factories and hooks from OpenAPI 3.0 / 3.1 and Swagger 2.0 documents (JSON or YAML; a file, a folder of files or a URL).
+- Clients: `library` picks the hooks — `react-query` (default), `vue-query`, `svelte-query`, `solid-query`, `angular-query`, `swr` — and `http` picks what the built-in runtime sends with — `fetch` (default), `axios` or Angular's `HttpClient` (`angular`, interceptors apply). The reactive libraries read each hook argument where the request is made, so a ref, a signal or a getter keeps the query in step. `client: "custom"` imports your own transport instead.
+- Several services in one layer: documents are merged, conflicts are decided once and committed.
+- `openapi-forge pull`, `--check` (fails CI when the committed layer is stale), `--watch`, `doctor`, `init`.
+- `openapi-forge diff` and a change report on `pull`: breaking / risky / safe, by hook name.
+- `zod: true` writes `schemas.ts`; `infinite: true` adds infinite-list hooks.
+- Same-shaped query and variable types are written once (aliases, or `Omit<…> & {…}` when close).
+- An incomplete document never produces broken output: unknown spots are typed `unknown` and listed with the operation and the part. What the client cannot do as the document asks (a cookie parameter, a query written on one line) is listed the same way, not sent differently in silence.
+- The types are true of what is sent and received: only an operation whose response schema is an envelope is unwrapped (`isEnvelope`), `ApiListData` needs `count` and `list` to be `required`, header parameters are arguments (also of infinite-list hooks), a `DELETE` sends its body, `runtime.list.assumeRequired` takes `count` and `list` as always there, bodies go out as their media type (multipart with lists and objects, urlencoded, text, bytes), an answer is read by its `Content-Type` (JSON, text or `Blob`), and an object in a query is `a[b]=1`.
+- Written in strict TypeScript; the package ships `dist/` with `.d.ts` files.
+- `npm run conformance` is a client × document matrix (8 × 61: 60 public documents of `@readme/oas-examples` plus the client-test fixture), generated and type-checked with `tsc --strict`. `npm test` runs the three HTTP clients and all six hook libraries against a local server (data, reactive arguments, a missing id, mutations, infinite lists, abort on teardown).
+- Checked against two live backends (NestJS and FastAPI).

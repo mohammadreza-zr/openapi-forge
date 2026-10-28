@@ -3,8 +3,9 @@
 import { createServer } from "node:http";
 
 /**
- * @param reply (request) => { status?, body } — may be async. `body` is sent as
- * JSON unless it is a string. GET /asked lists "METHOD url" of what was seen.
+ * @param reply (request) => { status?, body, type? } — may be async. `body` is
+ * sent as JSON unless it is a string or bytes; `type` is its content type
+ * (JSON by default). GET /asked lists "METHOD url" of what was seen.
  */
 export async function serve(reply) {
   const seen = [];
@@ -24,9 +25,13 @@ export async function serve(reply) {
       body: Buffer.concat(chunks).toString("utf8"),
     };
     seen.push(entry);
-    const { status = 200, body } = await reply(entry);
-    response.writeHead(status, { "content-type": "application/json" });
-    response.end(typeof body === "string" ? body : JSON.stringify(body));
+    const { status = 200, body, type = "application/json" } = await reply(entry);
+    response.writeHead(status, { "content-type": type });
+    response.end(
+      typeof body === "string" || Buffer.isBuffer(body)
+        ? body
+        : JSON.stringify(body),
+    );
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;

@@ -17,23 +17,11 @@ interface Transport {
   send: string;
 }
 
-/** A body read as text: JSON when it is JSON, the text itself otherwise. */
-const READ_BODY = `
-function readBody(text: string | null): unknown {
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-`;
-
 const TRANSPORTS: Record<HttpClientName, Transport> = {
   fetch: {
     imports: "",
     packages: [],
-    send: `${READ_BODY}
+    send: `
 async function send(
   method: string,
   url: string,
@@ -45,7 +33,8 @@ async function send(
   return {
     status: response.status,
     statusText: response.statusText,
-    body: readBody(await response.text()),
+    contentType: response.headers.get("content-type"),
+    bytes: await response.arrayBuffer(),
   };
 }
 `,
@@ -65,19 +54,22 @@ async function send(
   payload: BodyInit | undefined,
   signal: AbortSignal | undefined,
 ): Promise<Answer> {
-  const response = await settings.instance.request({
+  const response = await settings.instance.request<ArrayBuffer>({
     method,
     url,
     headers,
     data: payload,
     signal,
-    // The status is judged below, the same way for every HTTP client.
+    // The bytes are read below by content type, and the status is judged
+    // there too, the same way for every HTTP client.
+    responseType: "arraybuffer",
     validateStatus: () => true,
   });
   return {
     status: response.status,
     statusText: response.statusText,
-    body: response.data === "" ? null : response.data,
+    contentType: String(response.headers["content-type"] ?? "") || null,
+    bytes: response.data,
   };
 }
 `,
@@ -90,7 +82,7 @@ import { EmptyError, Observable, firstValueFrom, takeUntil } from "rxjs";`,
       type: "/** Angular's HttpClient, so its interceptors apply: \`configureClient({ instance: inject(HttpClient) })\` at start-up. */\n  instance?: HttpClient;",
       initial: "",
     },
-    send: `${READ_BODY}
+    send: `
 async function send(
   method: string,
   url: string,
@@ -116,14 +108,15 @@ async function send(
           headers,
           body: payload,
           observe: "response",
-          responseType: "text",
+          responseType: "arraybuffer",
         })
         .pipe(takeUntil(aborted)),
     );
     return {
       status: response.status,
       statusText: response.statusText,
-      body: readBody(response.body),
+      contentType: response.headers.get("content-type"),
+      bytes: response.body ?? new ArrayBuffer(0),
     };
   } catch (error) {
     // A status of 0 is no answer at all — the network failed.
@@ -131,7 +124,9 @@ async function send(
       return {
         status: error.status,
         statusText: error.statusText,
-        body: readBody(typeof error.error === "string" ? error.error : null),
+        contentType: error.headers.get("content-type"),
+        bytes:
+          error.error instanceof ArrayBuffer ? error.error : new ArrayBuffer(0),
       };
     }
     if (error instanceof EmptyError && signal?.aborted) {
@@ -162,7 +157,13 @@ import {
   type GeneratedRequestConfig,
 } from "./types";
 
-type Answer = { status: number; statusText: string; body: unknown };
+/** What a transport hands back: the status and the answer's raw bytes. */
+type Answer = {
+  status: number;
+  statusText: string;
+  contentType: string | null;
+  bytes: BufferSource;
+};
 
 /**
  * Where requests go when a call names no \`baseUrl\`. Set it once at start-up:
@@ -177,44 +178,120 @@ export function configureClient(next: Partial<typeof settings>) {
   Object.assign(settings, next);
 }
 
+/** \`a=1&a=2\` for a list, \`a[b]=1\` for an object; \`undefined\`, \`null\` and \`""\` are left out. */
+function appendParam(query: URLSearchParams, key: string, value: unknown) {
+  if (value === undefined || value === null || value === "") return;
+  if (Array.isArray(value)) {
+    for (const item of value) appendParam(query, key, item);
+  } else if (typeof value === "object") {
+    for (const [name, item] of Object.entries(value)) {
+      appendParam(query, \`\${key}[\${name}]\`, item);
+    }
+  } else {
+    query.append(key, String(value));
+  }
+}
+
 function buildUrl(
   route: string,
   config: GeneratedRequestConfig | undefined,
 ): string {
   let path = route;
   for (const [key, value] of Object.entries(config?.addTemplateToUrl ?? {})) {
-    path = path.replaceAll(
-      \`{\${key}}\`,
-      encodeURIComponent(String(Array.isArray(value) ? value.join(",") : value)),
-    );
+    // A list is written \`a,b\`, an object \`name,value,name,value\`.
+    const text =
+      value !== null && typeof value === "object" && !Array.isArray(value)
+        ? Object.entries(value).flat().join(",")
+        : String(value);
+    path = path.replaceAll(\`{\${key}}\`, encodeURIComponent(text));
   }
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(config?.params ?? {})) {
-    for (const item of Array.isArray(value) ? value : [value]) {
-      if (item !== undefined && item !== null && item !== "")
-        query.append(key, String(item));
-    }
+    appendParam(query, key, value);
   }
   const text = query.toString();
   const base = (config?.baseUrl ?? settings.baseUrl).replace(/\\/$/, "");
   return \`\${base}\${path}\${text ? \`?\${text}\` : ""}\`;
 }
 
-/** An answer's payload: the envelope's \`data\` when it is one, else the JSON itself. */
-function unwrap<T>(body: unknown, status: number): T {
-  const envelope = body as Partial<ApiEnvelope<T>> | null;
-  if (envelope && typeof envelope === "object" && "result" in envelope) {
-    if (envelope.result === false) {
-      throw new ApiResponseError(
-        typeof envelope.message === "string"
-          ? envelope.message
-          : "The request failed.",
-        { status, code: envelope.code, body },
-      );
+/** A header's value, whatever its capitals. */
+const headerOf = (headers: Record<string, string>, name: string) =>
+  Object.entries(headers).find(([key]) => key.toLowerCase() === name)?.[1];
+
+/** What the body is sent as: multipart for an upload, the \`Content-Type\` the call names, JSON otherwise. */
+function encodeBody(
+  body: unknown,
+  headers: Record<string, string>,
+  isFormData: boolean | undefined,
+): BodyInit | undefined {
+  if (body === undefined || body === null) return undefined;
+  if (isFormData) {
+    // One part per field: a file as it is, a list as a part per item, an
+    // object as JSON, anything else as text.
+    const form = new FormData();
+    for (const [name, value] of Object.entries(body)) {
+      for (const item of Array.isArray(value) ? value : [value]) {
+        if (item === undefined || item === null) continue;
+        form.append(
+          name,
+          item instanceof Blob
+            ? item
+            : typeof item === "object"
+              ? JSON.stringify(item)
+              : String(item),
+        );
+      }
     }
-    return envelope.data as T;
+    return form;
   }
-  return body as T;
+  const type = headerOf(headers, "content-type") ?? "";
+  if (type.startsWith("application/x-www-form-urlencoded")) {
+    const form = new URLSearchParams();
+    for (const [name, value] of Object.entries(body)) {
+      appendParam(form, name, value);
+    }
+    return form;
+  }
+  // Text and bytes (a \`Content-Type\` that is not JSON) are sent as they are.
+  if (type && !type.includes("json")) return body as BodyInit;
+  if (!type) headers["Content-Type"] = "application/json";
+  return JSON.stringify(body);
+}
+
+/** The answer's payload by its content type: JSON parsed, text as it is, anything else a Blob. */
+function readBody({ bytes, contentType }: Answer): unknown {
+  const type = (contentType ?? "").split(";")[0].trim().toLowerCase();
+  const isJson = type.includes("json");
+  const isText = type.startsWith("text/") && !isJson;
+  if (type && !isJson && !isText) return new Blob([bytes], { type });
+  if (!bytes.byteLength) return null;
+  const text = new TextDecoder().decode(bytes);
+  if (isText) return text;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * The payload of an answer. Only a call marked \`isEnvelope\` is unwrapped — the
+ * request function knows from the document that its answer is wrapped — so a
+ * payload that merely has a \`result\` field is never mistaken for one.
+ */
+function unwrap<T>(body: unknown, status: number, isEnvelope?: boolean): T {
+  const envelope = body as Partial<ApiEnvelope<T>> | null;
+  if (!isEnvelope || !envelope || typeof envelope !== "object") return body as T;
+  if (!("result" in envelope)) return body as T;
+  if (envelope.result === false) {
+    throw new ApiResponseError(
+      typeof envelope.message === "string"
+        ? envelope.message
+        : "The request failed.",
+      { status, code: envelope.code, body },
+    );
+  }
+  return envelope.data as T;
 }
 ${send}
 async function request<T>(
@@ -224,24 +301,14 @@ async function request<T>(
   config?: GeneratedRequestConfig<T>,
 ): Promise<T> {
   const headers: Record<string, string> = {
-    Accept: "application/json",
+    Accept: "application/json, text/plain, */*",
     ...(await settings.headers()),
-    ...config?.headers,
   };
-  let payload: BodyInit | undefined;
-  if (body !== undefined && body !== null) {
-    if (config?.isFormData) {
-      const form = new FormData();
-      for (const [key, value] of Object.entries(body as object)) {
-        if (value === undefined || value === null) continue;
-        form.append(key, value instanceof Blob ? value : String(value));
-      }
-      payload = form;
-    } else {
-      headers["Content-Type"] = "application/json";
-      payload = JSON.stringify(body);
-    }
+  // A header's value is written with \`String()\`; \`undefined\` and \`null\` leave it out.
+  for (const [name, value] of Object.entries(config?.headers ?? {})) {
+    if (value !== undefined && value !== null) headers[name] = String(value);
   }
+  const payload = encodeBody(body, headers, config?.isFormData);
   const answer = await send(
     method,
     buildUrl(route, config),
@@ -249,13 +316,14 @@ async function request<T>(
     payload,
     config?.signal,
   );
+  const answerBody = readBody(answer);
   if (answer.status < 200 || answer.status > 299) {
     throw new ApiResponseError(answer.statusText || "The request failed.", {
       status: answer.status,
-      body: answer.body,
+      body: answerBody,
     });
   }
-  return unwrap<T>(answer.body, answer.status);
+  return unwrap<T>(answerBody, answer.status, config?.isEnvelope);
 }
 
 export const apiGet = <T>(route: string, config?: GeneratedRequestConfig<T>) =>
@@ -263,7 +331,7 @@ export const apiGet = <T>(route: string, config?: GeneratedRequestConfig<T>) =>
 export const apiDelete = <T>(
   route: string,
   config?: GeneratedRequestConfig<T>,
-) => request<T>("DELETE", route, undefined, config);
+) => request<T>("DELETE", route, config?.body, config);
 export const apiPost = <T>(
   route: string,
   body: unknown,

@@ -90,14 +90,15 @@ async function exists(file: string): Promise<boolean> {
 const SHOWN_PROBLEMS = 12;
 
 /**
- * What the document leaves incomplete. The output is still valid — those
- * spots are typed \`unknown\` — so this only tells the author where to look.
+ * What the document leaves incomplete, or asks for and the client cannot do.
+ * The output is still valid — an unknown spot is typed \`unknown\`, a part that
+ * cannot be sent is left out — so this only tells the author where to look.
  */
 function reportProblems(problems: Problem[], verbose: boolean): void {
   if (!problems.length) return;
   const shown = verbose ? problems : problems.slice(0, SHOWN_PROBLEMS);
   console.warn(
-    `${TAG}: ${problems.length} incomplete type${problems.length === 1 ? "" : "s"} in the document:`,
+    `${TAG}: ${problems.length} thing${problems.length === 1 ? "" : "s"} to look at in the document:`,
   );
   for (const { where, message } of shown)
     console.warn(`  ▲ ${where} ${message}`);

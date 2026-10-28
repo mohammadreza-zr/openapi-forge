@@ -39,13 +39,18 @@ export class ApiResponseError extends Error {
 /** What a generated request function takes beside its own arguments. */
 export type GeneratedRequestConfig<T = unknown> = {
   signal?: AbortSignal;
-  headers?: Record<string, string>;
-  /** The query string. Arrays repeat the key; \`undefined\` and \`null\` are left out. */
+  /** Written with \`String()\`; \`undefined\` and \`null\` leave a header out. A \`Content-Type\` that is not JSON sends the body as it is (an object as a form when it is \`application/x-www-form-urlencoded\`). */
+  headers?: Record<string, unknown>;
+  /** The query string. A list repeats the key (\`a=1&a=2\`), an object is \`a[b]=1\`; \`undefined\`, \`null\` and \`""\` are left out. */
   params?: Record<string, unknown>;
   /** Fills \`{name}\` in the route. */
   addTemplateToUrl?: Record<string, unknown>;
-  /** Send the body as multipart form data. */
+  /** Send the body as multipart form data: a list is a part per item, an object a JSON part. */
   isFormData?: boolean;
+  /** The answer is wrapped in \`{ result, data, … }\`: \`data\` is the payload and \`result: false\` throws. */
+  isEnvelope?: boolean;
+  /** The body of a \`DELETE\`, which has no body argument of its own. */
+  body?: unknown;
   /** Prepended to the route; falls back to the client's default. */
   baseUrl?: string;
   /** Type-only: the payload this request resolves to. */

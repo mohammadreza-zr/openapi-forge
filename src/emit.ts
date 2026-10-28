@@ -54,6 +54,9 @@ const GLOBAL_TYPES = new Set([
 
 const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "patch", "delete"];
 
+/** Header parameters OpenAPI says to ignore: the transport owns them. */
+const IGNORED_HEADERS = new Set(["accept", "content-type", "authorization"]);
+
 /**
  * @param {object} spec     the (merged) OpenAPI document
  * @param {object} options  resolved options — see config.mjs
@@ -324,7 +327,7 @@ export function emit(
    * generic envelope type already describes it, so the per-endpoint narrowing
    * is noise. Returns the data type text when the schema matches, else `null`.
    */
-  function envelopeDataPayload(schema: Schema) {
+  function envelopeDataPayload(schema: Schema, name: string) {
     if (!envelope) return null;
     if (!schema?.allOf?.length || schema.allOf.length !== 2) return null;
 
@@ -335,7 +338,7 @@ export function emit(
     const narrowProps = narrowing?.properties ?? {};
     if (!(envelope.data in narrowProps)) return null;
 
-    return typeFor(narrowProps[envelope.data], "EnvelopeData");
+    return typeFor(narrowProps[envelope.data], `${name}Data`);
   }
 
   const resolveParameter = (item: Parameter): Parameter =>
@@ -375,19 +378,22 @@ export function emit(
 
         const content: Record<string, MediaType> =
           operation.requestBody?.content ?? {};
-        const jsonBody =
-          content["application/json"] ??
-          content["application/*+json"] ??
-          Object.values(content).find((item) => item?.schema) ??
-          null;
+        // JSON when the document offers it, else the first body with a schema.
+        const bodyEntry =
+          Object.entries(content).find(([type]) => type === "application/json") ??
+          Object.entries(content).find(
+            ([type, item]) => type.includes("json") && item?.schema,
+          ) ??
+          Object.entries(content).find(([, item]) => item?.schema);
+        const requestMedia = bodyEntry?.[1] ?? null;
         // The HTTP client sends no body with GET or DELETE, so a body on one
         // is left out of the signature instead of being silently dropped.
         const at = `${method.toUpperCase()} ${path}`;
-        if (method === "delete" && operation.requestBody) {
+        if (method === "delete" && operation.requestBody && !rt.requestKeys.body) {
           problems.set(`${at}: skipped`, {
             where: at,
             message:
-              "was skipped: it takes a request body, which the client cannot send with DELETE",
+              "was skipped: it takes a request body, which the custom client cannot send with DELETE (`runtime.requestKeys.body`)",
           });
           continue;
         }
@@ -398,6 +404,20 @@ export function emit(
             message:
               "declares a request body, which cannot be sent with GET; it is left out",
           });
+        }
+        for (const item of parameters) {
+          const ignored =
+            item.in === "header" && IGNORED_HEADERS.has(item.name.toLowerCase());
+          const gap =
+            item.in === "cookie"
+              ? "is a cookie, which the client cannot send: a browser attaches cookies itself"
+              : item.in === "header" && !ignored && !rt.requestKeys.headers
+                ? "is a header, which the custom client takes none of (`runtime.requestKeys.headers`)"
+                : null;
+          if (gap) {
+            const spot = `${at} parameter \`${item.name}\``;
+            problems.set(`${spot}: ${gap}`, { where: spot, message: gap });
+          }
         }
         const success: { content?: Record<string, MediaType> } =
           Object.entries(operation.responses ?? {}).find(([status]) =>
@@ -434,11 +454,14 @@ export function emit(
                   path,
                 }) ?? item.name,
             })),
-          bodySchema: sendsBody ? (jsonBody?.schema ?? null) : null,
+          headerParams: rt.requestKeys.headers
+            ? parameters.filter(
+                (item) => item.in === "header" && !IGNORED_HEADERS.has(item.name.toLowerCase()),
+              )
+            : [],
+          bodySchema: sendsBody ? (requestMedia?.schema ?? null) : null,
           bodyRequired: sendsBody && operation.requestBody?.required === true,
-          isUpload: Object.keys(content).some((type) =>
-            /multipart\/form-data|x-www-form-urlencoded/.test(type),
-          ),
+          bodyMediaType: sendsBody && requestMedia?.schema ? bodyEntry![0] : null,
           responseSchema: successContent?.schema ?? null,
           service: operation["x-service"] ?? null,
         };
@@ -459,28 +482,61 @@ export function emit(
     return operations;
   }
 
-  /** The payload type is the envelope's `data`; `{ count, list }` is the list type. */
-  function payloadFor(operation: OperationInfo) {
+  /**
+   * The properties of an operation's answer. An envelope may be split across
+   * an `allOf` (a base with `result`, `code`, `message` and `data`, plus a
+   * per-operation part narrowing `data`), so the fields are merged before
+   * deciding that the answer is one.
+   */
+  function answerShape(operation: OperationInfo) {
     const declared = operation.responseSchema;
-    if (!declared) return "null";
-
-    const declaredNode = declared.$ref ? refTarget(declared.$ref) : declared;
-    // The envelope may be split across an `allOf` (a base with `result`,
-    // `code`, `message` and `data`, plus a per-operation part narrowing
-    // `data`), so the fields are merged before deciding that this is one.
-    const props = declaredNode?.allOf?.length
-      ? declaredNode.allOf.reduce(
+    if (!declared) return null;
+    const node = declared.$ref ? refTarget(declared.$ref) : declared;
+    const props: Record<string, Schema> = node?.allOf?.length
+      ? node.allOf.reduce(
           (merged, part) => ({
             ...merged,
             ...((part.$ref ? refTarget(part.$ref) : part)?.properties ?? {}),
           }),
           {},
         )
-      : (declaredNode?.properties ?? {});
+      : (node?.properties ?? {});
     const wraps = Boolean(
       envelope && props[envelope.result] && props[envelope.data],
     );
-    const data = envelope && wraps ? props[envelope.data] : declared;
+    return { declared, props, wraps };
+  }
+
+  /** The answer is an envelope: the client unwraps it, and only for a call that says so. */
+  const wrapsEnvelope = (operation: OperationInfo) =>
+    answerShape(operation)?.wraps ?? false;
+
+  /**
+   * A `{ count, list }` payload is the list type only when the document says
+   * both fields are always there; with either one optional the payload keeps
+   * its own, honest type.
+   */
+  function isListShape(data: Schema): data is Schema & { properties: Record<string, Schema> } {
+    if (!list || !data.properties) return false;
+    const required = new Set(data.required ?? []);
+    const count = deref(data.properties[list.count]);
+    const items = data.properties[list.items];
+    return (
+      (list.assumeRequired ||
+        (required.has(list.count) && required.has(list.items))) &&
+      (count.type === "integer" || count.type === "number") &&
+      count.nullable !== true &&
+      (items?.type === "array" || Boolean(items?.items)) &&
+      items?.nullable !== true
+    );
+  }
+
+  /** The payload type is the envelope's `data`; `{ count, list }` is the list type. */
+  function payloadFor(operation: OperationInfo) {
+    const shape = answerShape(operation);
+    if (!shape) return "null";
+    const { declared, props, wraps } = shape;
+    const data = wraps && envelope ? props[envelope.data] : declared;
 
     if (!data) return "null";
     if (
@@ -493,14 +549,9 @@ export function emit(
     }
 
     const resolved = deref(data, new Set());
-    if (list) {
-      const itemsSchema = resolved.properties?.[list.items];
-      if (
-        resolved.properties?.[list.count] &&
-        (itemsSchema?.items || itemsSchema?.type === "array")
-      ) {
-        return `${list.name}<${typeFor(itemsSchema.items, `${pascalCase(operation.name)}Item`)}>`;
-      }
+    if (list && isListShape(resolved)) {
+      const items = resolved.properties[list.items];
+      return `${list.name}<${typeFor(items.items, `${pascalCase(operation.name)}Item`)}>`;
     }
 
     return typeFor(data, `${pascalCase(operation.name)}Response`);
@@ -514,14 +565,53 @@ export function emit(
   const paramType = (parameter: Parameter) =>
     typeFor(parameter.schema, pascalCase(`${parameter.name}Param`));
 
+  /**
+   * The client writes a list as repeated keys (`a=1&a=2`) and an object as
+   * `a[b]=1`. A query parameter that asks for another style is reported, not
+   * silently sent differently.
+   */
+  function checkQueryEncoding(parameter: Parameter) {
+    const schema = deref(parameter.schema);
+    if (
+      schema.type === "array" &&
+      (parameter.explode === false ||
+        parameter.style === "spaceDelimited" ||
+        parameter.style === "pipeDelimited")
+    ) {
+      note(
+        `is a list the document writes on one line, but the client repeats the key (\`${parameter.name}=a&${parameter.name}=b\`)`,
+      );
+    }
+    if (
+      (schema.type === "object" || (!schema.type && schema.properties)) &&
+      parameter.style !== "deepObject"
+    ) {
+      note(
+        `is an object, which the client writes as \`${parameter.name}[property]=value\` (deepObject)`,
+      );
+    }
+  }
+
   const queryTypeName = (operation: OperationInfo) => `${pascalCase(operation.name)}Query`;
   /** A `= {}` default is only legal while every query parameter is optional. */
   const queryIsOptional = (operation: OperationInfo) =>
     !operation.queryParams.some((item) => item.required);
+  const headersTypeName = (operation: OperationInfo) => `${pascalCase(operation.name)}Headers`;
+  /** Likewise: a `= {}` default only while no header is required. */
+  const headersAreOptional = (operation: OperationInfo) =>
+    !operation.headerParams.some((item) => item.required);
   const variablesTypeName = (operation: OperationInfo) =>
     `${pascalCase(operation.name)}Variables`;
   const bodyTypeName = (operation: OperationInfo) =>
     typeFor(operation.bodySchema, `${pascalCase(operation.name)}Body`);
+
+  /** How a body goes out, by the media type the document gives it. */
+  function bodyKind(media: string | null) {
+    if (!media || media.includes("json")) return "json";
+    if (media.startsWith("multipart/")) return "multipart";
+    if (media.startsWith("application/x-www-form-urlencoded")) return "urlencoded";
+    return "raw";
+  }
 
   /**
    * How emitted code reads a route back out of its tag's `Endpoints` map: the
@@ -550,6 +640,7 @@ export function emit(
   function infiniteOf(operation: OperationInfo) {
     if (!hooks || !infinite || !list || operation.method !== "get")
       return null;
+    // A path id makes it a detail read, not a list.
     if (operation.pathParams.length) return null;
     const payload = payloadFor(operation);
     if (!payload.startsWith(`${list.name}<`)) return null;
@@ -564,33 +655,37 @@ export function emit(
       rest,
       omit: `Omit<${queryTypeName(operation)}, ${JSON.stringify(infinite.start)} | ${JSON.stringify(infinite.size)}>`,
       optional: !rest.some((item) => item.required),
+      headers: operation.headerParams.length ? headersTypeName(operation) : null,
     };
   }
 
   const infiniteKey = (operation: OperationInfo) => `${operation.name}Infinite`;
 
   function infiniteKeyEntry(operation: OperationInfo, keys: string, endpoints: string) {
-    const { omit } = infiniteOf(operation)!;
+    const { omit, headers } = infiniteOf(operation)!;
     return [
-      `  ${infiniteKey(operation)}: (params: ${omit}) =>`,
-      `    [...${keys}.lists(), ${endpointRef(endpoints, operation)}, "infinite", params] as const,`,
+      `  ${infiniteKey(operation)}: (params: ${omit}${headers ? `, headers: ${headers}` : ""}) =>`,
+      `    [...${keys}.lists(), ${endpointRef(endpoints, operation)}, "infinite", params${headers ? ", headers" : ""}] as const,`,
     ].join("\n");
   }
 
   function infiniteHookBlock(operation: OperationInfo, keys: string) {
-    const { item, omit, optional } = infiniteOf(operation)!;
+    const { item, omit, optional, headers } = infiniteOf(operation)!;
     const { start, size } = infinite as { start: string; size: string };
     const signal = rt.requestKeys.signal;
     return [
       requestDoc(operation),
       `export function ${prefix}${pascalCase(operation.name)}InfiniteQuery(`,
       `  query: ${argType(omit)}${optional ? " = {}" : ""},`,
+      ...(headers
+        ? [`  headers: ${argType(headers)}${headersAreOptional(operation) ? " = {}" : ""},`]
+        : []),
       `  options?: ${rt.types.infinite}<${item}, ReturnType<typeof ${keys}.${infiniteKey(operation)}>>,`,
       `) {`,
       `  return ${rt.hooks.infinite}(`,
-      `    ${lazy(`${keys}.${infiniteKey(operation)}(${argRead("query")})`)},`,
+      `    ${lazy(`${keys}.${infiniteKey(operation)}(${argRead("query")}${headers ? `, ${argRead("headers")}` : ""})`)},`,
       `    (page, signal) =>`,
-      `      ${operation.name}({ ...${argRead("query")}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }, { ${signal === "signal" ? "signal" : `${signal}: signal`} }),`,
+      `      ${operation.name}({ ...${argRead("query")}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }, ${headers ? `${argRead("headers")}, ` : ""}{ ${signal === "signal" ? "signal" : `${signal}: signal`} }),`,
       `    options,`,
       `  );`,
       `}`,
@@ -621,7 +716,10 @@ export function emit(
       hooks ? keyFactoryBlock(tag, operations, keys, endpoints) : "",
       shareIdenticalTypes(
         [
-          ...operations.map((operation) => queryTypeBlock(operation)),
+          ...operations.flatMap((operation) => [
+            queryTypeBlock(operation),
+            headersTypeBlock(operation),
+          ]),
           ...writes.map((operation) => variablesBlock(operation)),
         ].filter(Boolean),
         undefined,
@@ -742,27 +840,32 @@ export function emit(
       `  details: () => [...${keys}.all, "detail"] as const,`,
       ...reads.map((operation) => {
         const isDetail = operation.pathParams.length > 0;
-        // A detail read that also takes a query keys on both: two searches of
-        // the same group are two answers.
-        const hasQuery = operation.queryParams.length > 0;
-        const args = isDetail
-          ? [
-              ...operation.pathParams.map(
+        // What the answer depends on beside the route: a detail read that also
+        // takes a query or headers keys on them too — two searches of the same
+        // group, or the same read for two tenants, are two answers.
+        const inputs = [
+          ...(operation.queryParams.length
+            ? [{ name: "params", type: queryTypeName(operation) }]
+            : []),
+          ...(operation.headerParams.length
+            ? [{ name: "headers", type: headersTypeName(operation) }]
+            : []),
+        ];
+        const args = [
+          ...(isDetail
+            ? operation.pathParams.map(
                 (item) =>
                   `${identifier(item.name, `${operation.name}Path`)}: ${paramType(item)}`,
-              ),
-              ...(hasQuery ? [`params?: ${queryTypeName(operation)}`] : []),
-            ].join(", ")
-          : hasQuery
-            ? `params: ${queryTypeName(operation)}`
-            : "";
-        const tail = isDetail
-          ? [...pathArgNames(operation), ...(hasQuery ? ["params"] : [])].join(
-              ", ",
-            )
-          : hasQuery
-            ? "params"
-            : "";
+              )
+            : []),
+          ...inputs.map(
+            (input) => `${input.name}${isDetail ? "?" : ""}: ${input.type}`,
+          ),
+        ].join(", ");
+        const tail = [
+          ...(isDetail ? pathArgNames(operation) : []),
+          ...inputs.map((input) => input.name),
+        ].join(", ");
         return [
           `  ${propertyName(operation.name)}: (${args}) =>`,
           `    [...${keys}.${isDetail ? "details()" : "lists()"}, ${endpointRef(endpoints, operation)}${tail ? `, ${tail}` : ""}] as const,`,
@@ -791,6 +894,22 @@ export function emit(
     ].join("\n");
   }
 
+  function headersTypeBlock(operation: OperationInfo) {
+    if (!operation.headerParams.length) return "";
+    return [
+      `export type ${headersTypeName(operation)} = {`,
+      ...operation.headerParams.map((item) =>
+        [
+          item.description ? `  /** ${oneLine(item.description)} */` : null,
+          `  ${propertyName(item.name)}${item.required ? "" : "?"}: ${paramType(item)};`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      ),
+      "};",
+    ].join("\n");
+  }
+
   /** One object for a write, so a path id and a body are passed as one value. */
   function variablesBlock(operation: OperationInfo) {
     if (!hooks) return "";
@@ -801,6 +920,11 @@ export function emit(
     if (operation.queryParams.length) {
       const required = operation.queryParams.some((item) => item.required);
       parts.push(`query${required ? "" : "?"}: ${queryTypeName(operation)}`);
+    }
+    if (operation.headerParams.length) {
+      parts.push(
+        `headers${headersAreOptional(operation) ? "?" : ""}: ${headersTypeName(operation)}`,
+      );
     }
     if (operation.bodySchema) {
       parts.push(
@@ -828,6 +952,11 @@ export function emit(
         `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
     }
+    if (operation.headerParams.length) {
+      args.push(
+        `headers: ${headersTypeName(operation)}${headersAreOptional(operation) ? " = {}" : ""}`,
+      );
+    }
     if (operation.bodySchema) {
       args.push(
         `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
@@ -848,7 +977,31 @@ export function emit(
       });
       configLines.push(`${keys.pathParams}: { ${entries.join(", ")} }`);
     }
-    if (operation.isUpload) configLines.push(`${keys.formData}: true`);
+    // How the body goes out: multipart is a flag; any other body that is not
+    // JSON names its `Content-Type`, and the client sends it accordingly.
+    const kind = bodyKind(operation.bodyMediaType);
+    const sendsForm = kind === "multipart" || (kind === "urlencoded" && !keys.headers);
+    if (sendsForm) configLines.push(`${keys.formData}: true`);
+    if (keys.headers) {
+      const entries = [
+        ...(operation.headerParams.length ? ["...headers"] : []),
+        ...(kind === "urlencoded" || kind === "raw"
+          ? [`"Content-Type": ${JSON.stringify(operation.bodyMediaType)}`]
+          : []),
+      ];
+      if (entries.length) {
+        configLines.push(
+          `${keys.headers}: { ...config?.${keys.headers}, ${entries.join(", ")} }`,
+        );
+      }
+    }
+    if (keys.envelope && wrapsEnvelope(operation)) {
+      configLines.push(`${keys.envelope}: true`);
+    }
+    // `apiDelete(route, config)` has no body argument, so a DELETE's body rides in the config.
+    if (operation.method === "delete" && operation.bodySchema && keys.body) {
+      configLines.push(`${keys.body}: body`);
+    }
     if (operation.service) {
       configLines.push(
         `${keys.baseUrl}: config?.${keys.baseUrl} ?? API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}]`,
@@ -907,26 +1060,31 @@ export function emit(
         `query: ${argType(queryTypeName(operation))}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
     }
+    if (operation.headerParams.length) {
+      params.push(
+        `headers: ${argType(headersTypeName(operation))}${headersAreOptional(operation) ? " = {}" : ""}`,
+      );
+    }
     // The key type is the factory's own return type: a wider `QueryKey` here
     // makes `enabled` and `placeholderData` unassignable.
     params.push(
       `options?: ${rt.types.query}<${payload}, ReturnType<typeof ${keys}.${operation.name}>>`,
     );
 
-    const keyArgs = operation.pathParams.length
-      ? [
-          ...pathArgNames(operation).map(
-            (item, index) =>
-              `${argRead(item)} ?? ${keyFallback(paramType(operation.pathParams[index]))}`,
-          ),
-          ...(operation.queryParams.length ? [argRead("query")] : []),
-        ].join(", ")
-      : operation.queryParams.length
-        ? argRead("query")
-        : "";
+    const inputs = [
+      ...(operation.queryParams.length ? [argRead("query")] : []),
+      ...(operation.headerParams.length ? [argRead("headers")] : []),
+    ];
+    const keyArgs = [
+      ...pathArgNames(operation).map(
+        (item, index) =>
+          `${argRead(item)} ?? ${keyFallback(paramType(operation.pathParams[index]))}`,
+      ),
+      ...inputs,
+    ].join(", ");
     const callArgs = [
       ...pathArgNames(operation).map((item) => `${argRead(item)}!`),
-      ...(operation.queryParams.length ? [argRead("query")] : []),
+      ...inputs,
     ];
     // A detail query waits for its id instead of requesting `/stations/undefined`.
     // The caller's `options` win, so it can still force `enabled`.
@@ -938,9 +1096,10 @@ export function emit(
             `[${waiting.map(argRead).join(", ")}].every((value) => value !== undefined && !Number.isNaN(value))`,
           )
         : waiting
-            .map(
-              (item) =>
-                `typeof ${item} !== "undefined" && !(typeof ${item} === "number" && Number.isNaN(${item}))`,
+            .map((item, index) =>
+              paramType(operation.pathParams[index]) === "number"
+                ? `${item} !== undefined && !Number.isNaN(${item})`
+                : `${item} !== undefined`,
             )
             .join(" && ");
     const signal = rt.requestKeys.signal;
@@ -968,6 +1127,7 @@ export function emit(
     const hasVariables = Boolean(
       operation.pathParams.length ||
       operation.queryParams.length ||
+      operation.headerParams.length ||
       operation.bodySchema,
     );
     const variablesType = hasVariables ? variablesTypeName(operation) : "void";
@@ -994,6 +1154,10 @@ export function emit(
         slots.push("query");
         // A required query has no `{}` to fall back to.
         callArgs.push(queryIsOptional(operation) ? "query ?? {}" : "query");
+      }
+      if (operation.headerParams.length) {
+        slots.push("headers");
+        callArgs.push(headersAreOptional(operation) ? "headers ?? {}" : "headers");
       }
       if (operation.bodySchema) {
         slots.push("body");
@@ -1079,9 +1243,13 @@ export function emit(
       for (const parameter of [
         ...operation.pathParams,
         ...operation.queryParams,
+        ...operation.headerParams,
       ]) {
         where = `${at} parameter \`${parameter.name}\``;
         paramType(parameter);
+        if (operation.queryParams.includes(parameter)) {
+          checkQueryEncoding(parameter);
+        }
       }
     }
   }
@@ -1095,7 +1263,7 @@ export function emit(
     where = `schema ${name}`;
 
     // An `allOf` envelope uses the generic envelope type.
-    const envelopePayload = envelopeDataPayload(schema);
+    const envelopePayload = envelopeDataPayload(schema, name);
     if (envelope && envelopePayload) {
       // Walk only the data property to register nested inline models, avoiding
       // the creation of Part1 types for the envelope structure itself.

@@ -124,7 +124,14 @@ export interface RuntimeConfig {
   /** The `{ count, list }` shape of a paged answer; `false` turns it off. */
   list:
     | false
-    | { name: string; module: string; count: string; items: string };
+    | {
+        name: string;
+        module: string;
+        count: string;
+        items: string;
+        /** Take both fields to be always there, as the API does, though the document does not say so. */
+        assumeRequired?: boolean;
+      };
   /** The `{ result, data, … }` wrapper of every answer; `false` for none. */
   envelope:
     | false
@@ -141,6 +148,12 @@ export interface RuntimeConfig {
     formData: string;
     baseUrl: string;
     signal: string;
+    /** Where declared header parameters (and a non-JSON \`Content-Type\`) go; \`false\` when the transport takes none. */
+    headers: string | false;
+    /** The flag of a call whose answer is an envelope; \`false\` when the transport unwraps on its own. */
+    envelope: string | false;
+    /** Where the body of a DELETE goes (the transport's \`apiDelete\` takes no body argument); \`false\` skips such operations. */
+    body: string | false;
   };
   services: {
     module?: string;
@@ -162,9 +175,12 @@ export interface OperationInfo {
   deprecated: boolean;
   pathParams: Parameter[];
   queryParams: Parameter[];
+  /** Declared header parameters, without the ones OpenAPI says to ignore (\`Accept\`, \`Content-Type\`, \`Authorization\`). */
+  headerParams: Parameter[];
   bodySchema: Schema | null;
   bodyRequired: boolean;
-  isUpload: boolean;
+  /** The media type the body is sent as, e.g. \`application/json\`; \`null\` without a body. */
+  bodyMediaType: string | null;
   responseSchema: Schema | null;
   service: string | null;
 }

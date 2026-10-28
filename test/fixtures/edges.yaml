@@ -1,0 +1,187 @@
+openapi: 3.0.3
+info: { title: Edges, version: "1" }
+tags: [{ name: Edges }]
+paths:
+  /api/v1/check:
+    get:
+      tags: [Edges]
+      operationId: check
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object, required: [result], properties: { result: { type: boolean } } }
+  /api/v1/search:
+    get:
+      tags: [Edges]
+      operationId: search
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result, total]
+                properties: { result: { type: string }, total: { type: integer } }
+  /api/v1/tenant:
+    get:
+      tags: [Edges]
+      operationId: getTenant
+      parameters:
+        - { name: X-Tenant-Id, in: header, required: true, schema: { type: string } }
+        - { name: X-Page, in: header, schema: { type: integer } }
+        - { name: Authorization, in: header, schema: { type: string } }
+        - { name: session, in: cookie, schema: { type: string } }
+        - name: filter
+          in: query
+          style: deepObject
+          explode: true
+          schema: { type: object, properties: { a: { type: string } } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: tags, in: query, style: pipeDelimited, explode: false, schema: { type: array, items: { type: string } } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: object }
+  /api/v1/files:
+    post:
+      tags: [Edges]
+      operationId: uploadMany
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                files: { type: array, items: { type: string, format: binary } }
+                meta: { type: object, properties: { a: { type: string } } }
+      responses:
+        "204": { description: none }
+  /api/v1/download:
+    get:
+      tags: [Edges]
+      operationId: download
+      responses:
+        "200":
+          description: ok
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+  /api/v1/form:
+    post:
+      tags: [Edges]
+      operationId: sendForm
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                a: { type: string }
+                tags: { type: array, items: { type: string } }
+      responses:
+        "200": { description: ok }
+  /api/v1/note:
+    post:
+      tags: [Edges]
+      operationId: sendNote
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            text/plain:
+              schema: { type: string }
+  /api/v1/blob:
+    post:
+      tags: [Edges]
+      operationId: sendBlob
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200": { description: ok }
+  /api/v1/text:
+    get:
+      tags: [Edges]
+      operationId: getText
+      responses:
+        "200":
+          description: ok
+          content:
+            text/plain:
+              schema: { type: string }
+  /api/v1/loose:
+    get:
+      tags: [Edges]
+      operationId: listLoose
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  list: { type: array, items: { type: string } }
+  /api/v1/strict:
+    get:
+      tags: [Edges]
+      operationId: listStrict
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, list]
+                properties:
+                  count: { type: integer }
+                  list: { type: array, items: { type: string } }
+  /api/v1/remove:
+    delete:
+      tags: [Edges]
+      operationId: remove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { type: string } }
+      responses:
+        "200": { description: ok }
+  /api/v1/pages:
+    get:
+      tags: [Edges]
+      operationId: listPages
+      parameters:
+        - { name: X-Tenant-Id, in: header, required: true, schema: { type: string } }
+        - { name: start, in: query, schema: { type: integer } }
+        - { name: offset, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, list]
+                properties:
+                  count: { type: integer }
+                  list: { type: array, items: { type: string } }

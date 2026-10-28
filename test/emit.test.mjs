@@ -45,7 +45,7 @@ test("read operations get keys and query hooks, writes get mutation hooks", () =
 });
 
 test("a detail query waits for its id", () => {
-  assert.match(run().files.get("pets.ts"), /enabled: typeof petId !== "undefined"/);
+  assert.match(run().files.get("pets.ts"), /enabled: petId !== undefined,/);
 });
 
 test("target requests emits functions only", () => {

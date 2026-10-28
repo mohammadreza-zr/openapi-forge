@@ -23,7 +23,23 @@ Object.defineProperty(globalThis, "navigator", {
 });
 
 import { compileCjs, generateTo, sleep } from "./harness.mjs";
+import { EDGES_FIXTURE } from "./helpers.mjs";
 import { petApi, serve } from "./server.mjs";
+
+/** The edges fixture's paged read: five strings, from `start`, `offset` at a time. */
+function pagesApi(request) {
+  const url = new URL(request.url, "http://x");
+  const start = Number(url.searchParams.get("start") ?? 0);
+  const size = Number(url.searchParams.get("offset") ?? 20);
+  return {
+    body: {
+      count: 5,
+      list: Array.from({ length: Math.max(0, Math.min(size, 5 - start)) }, (_, i) =>
+        String(start + i),
+      ),
+    },
+  };
+}
 
 describe("the React hooks", () => {
   let server;
@@ -34,7 +50,9 @@ describe("the React hooks", () => {
   const html = React.createElement;
 
   before(async () => {
-    server = await serve(petApi);
+    server = await serve((request) =>
+      request.url.startsWith("/api/v1/pages") ? pagesApi(request) : petApi(request),
+    );
   });
   after(async () => {
     dom.window.close();
@@ -67,6 +85,7 @@ describe("the React hooks", () => {
   for (const library of ["react-query", "swr"]) {
     describe(library, () => {
       let api;
+      let edges;
       let wrap;
       let cleanup;
 
@@ -76,6 +95,17 @@ describe("the React hooks", () => {
         const load = createRequire(join(dir, "load.cjs"));
         api = load(join(js, "pets.js"));
         load(join(js, "client.js")).configureClient({ baseUrl: server.base });
+        const edgesDir = await generateTo(`${library}-edges`, {
+          library,
+          infinite: true,
+          input: EDGES_FIXTURE,
+        });
+        const edgesJs = compileCjs(edgesDir);
+        const loadEdges = createRequire(join(edgesDir, "load.cjs"));
+        edges = loadEdges(join(edgesJs, "edges.js"));
+        loadEdges(join(edgesJs, "client.js")).configureClient({
+          baseUrl: server.base,
+        });
         if (library === "react-query") {
           const { QueryClient, QueryClientProvider } = load(
             "@tanstack/react-query",
@@ -212,6 +242,58 @@ describe("the React hooks", () => {
           server.asked().includes("GET /api/v1/pets?kind=cat&start=2&offset=2"),
           server.asked().join("\n"),
         );
+        await view.unmount();
+      });
+
+      test("a header argument is sent, and a changed one moves the query", async () => {
+        const Probe = ({ tenant }) => {
+          edges.useGetTenantQuery({}, { "X-Tenant-Id": tenant });
+          return null;
+        };
+        const view = mount(wrap, Probe);
+        const sentBy = (tenant) =>
+          server.seen.some(
+            (item) =>
+              item.url.startsWith("/api/v1/tenant") &&
+              item.headers["x-tenant-id"] === tenant,
+          );
+        await view.render({ tenant: "a" });
+        await eventually(() => sentBy("a"), "a request for tenant a");
+        await view.render({ tenant: "b" });
+        await eventually(() => sentBy("b"), "a request for tenant b");
+        await view.unmount();
+      });
+
+      test("an infinite list sends its header with every page", async () => {
+        let latest;
+        const Probe = () => {
+          latest = {
+            ...edges.useListPagesInfiniteQuery(
+              {},
+              { "X-Tenant-Id": "t9" },
+              { pageSize: 2 },
+            ),
+          };
+          return null;
+        };
+        const view = mount(wrap, Probe);
+        await view.render({});
+        const pages = () =>
+          ((library === "swr" ? latest.data : latest.data?.pages) ?? []).map(
+            (page) => page.list.join(),
+          );
+        await eventually(() => pages().length === 1, "the first page");
+        await act(async () => {
+          if (library === "swr") await latest.setSize((size) => size + 1);
+          else await latest.fetchNextPage();
+        });
+        await eventually(() => pages().length === 2, "the second page");
+        assert.deepEqual(pages(), ["0,1", "2,3"]);
+        const asked = server.seen.filter((item) =>
+          item.url.startsWith("/api/v1/pages"),
+        );
+        assert.ok(asked.length >= 2);
+        assert.ok(asked.every((item) => item.headers["x-tenant-id"] === "t9"));
         await view.unmount();
       });
     });

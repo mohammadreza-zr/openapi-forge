@@ -31,6 +31,7 @@ const paged = () => ({
                     result: { type: "boolean" },
                     data: {
                       type: "object",
+                      required: ["count", "list"],
                       properties: {
                         count: { type: "integer" },
                         list: {

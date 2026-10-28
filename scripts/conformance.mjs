@@ -1,5 +1,5 @@
 // Runs every document of the public @readme/oas-examples corpus (Swagger 2.0,
-// OpenAPI 3.0 and 3.1) — and the clients fixture — through the generator once
+// OpenAPI 3.0 and 3.1) — and the clients and edges fixtures — through the generator once
 // per client, and type-checks what it wrote, strictly: one `tsc` per client over
 // every document. `npm run conformance`; `-- --keep` leaves the output to
 // inspect; `-- --only vue-query` runs one library.
@@ -36,6 +36,7 @@ const variants = [
 
 const documents = [
   { name: "clients-fixture", file: join(root, "test/fixtures/clients.yaml") },
+  { name: "edges-fixture", file: join(root, "test/fixtures/edges.yaml") },
 ];
 for (const version of ["2.0", "3.0", "3.1"]) {
   const dir = join(corpus, version, "json");
