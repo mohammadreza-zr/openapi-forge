@@ -375,6 +375,6 @@ const { files } = emit(doc, resolvedOptions, "swagger.json");          // name â
 - A `DELETE` that takes a body sends it; a `GET` that declares one cannot, so the body is left out with a warning.
 - A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows.
 - Prettier is optional: the project's own is used when installed (with its config); otherwise output is raw.
-- Tests: `npm test` (builds, then runs the suite); `npm run typecheck` checks the types only.
+- Tests: `npm test` (builds, then runs the suite on Node 20, 22 and 24 alike); `npm run typecheck` checks the types only.
 
 MIT
