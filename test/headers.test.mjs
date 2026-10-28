@@ -12,7 +12,7 @@ import { compileCjs, generateTo, until } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
 import { edgesApi, serve } from "./server.mjs";
 
-describe("header parameters in the vue-query hooks", () => {
+for (const http of ["fetch", "axios"]) describe(`header parameters in the vue-query hooks over ${http}`, () => {
   let server;
   let vue;
   let app;
@@ -20,8 +20,9 @@ describe("header parameters in the vue-query hooks", () => {
   let client;
 
   before(async () => {
-    const dir = await generateTo("vue-headers", {
+    const dir = await generateTo(`vue-headers-${http}`, {
       library: "vue-query",
+      http,
       infinite: true,
       input: EDGES_FIXTURE,
     });

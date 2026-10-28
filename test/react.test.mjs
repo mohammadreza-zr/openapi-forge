@@ -67,21 +67,27 @@ describe("the React hooks", () => {
     assert.fail(`timed out waiting for ${what}`);
   }
 
-  for (const library of ["react-query", "swr"]) {
-    describe(library, () => {
+  for (const [library, http] of [
+    ["react-query", "fetch"],
+    ["react-query", "axios"],
+    ["swr", "fetch"],
+    ["swr", "axios"],
+  ]) {
+    describe(`${library} over ${http}`, () => {
       let api;
       let edges;
       let wrap;
       let cleanup;
 
       before(async () => {
-        const dir = await generateTo(library, { library, infinite: true });
+        const dir = await generateTo(`${library}-${http}`, { library, http, infinite: true });
         const js = compileCjs(dir);
         const load = createRequire(join(dir, "load.cjs"));
         api = load(join(js, "pets.js"));
         load(join(js, "client.js")).configureClient({ baseUrl: server.base });
-        const edgesDir = await generateTo(`${library}-edges`, {
+        const edgesDir = await generateTo(`${library}-${http}-edges`, {
           library,
+          http,
           infinite: true,
           input: EDGES_FIXTURE,
         });
@@ -195,7 +201,7 @@ describe("the React hooks", () => {
         const view = mount(wrap, Probe);
         await view.render({});
         const pending = send(mutation, { body: { name: "slow" } });
-        const settled = assert.rejects(pending, /abort/i);
+        const settled = assert.rejects(pending, /abort|cancel/i);
         await act(async () => sleep(50));
         await view.unmount();
         await settled;

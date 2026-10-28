@@ -14,6 +14,7 @@ import { EDGES_FIXTURE } from "./helpers.mjs";
 const TRANSPORT = `
 export type MyConfig<T = unknown> = {
   signal?: AbortSignal;
+  headers?: Record<string, string>;
   params?: Record<string, unknown>;
   addTemplateToUrl?: Record<string, unknown>;
   isFormData?: boolean;
@@ -38,7 +39,7 @@ export const apiDelete = <T>(route: string, config?: MyConfig<T>): Promise<T> =>
   call("delete")(route, config);
 `;
 
-async function layer(name, patch) {
+async function layer(name, patch, requestKeys = {}) {
   const dir = await generateTo(name, {
     client: "custom",
     target: "requests",
@@ -47,6 +48,7 @@ async function layer(name, patch) {
       types: { module: "./transport", request: "MyConfig" },
       envelope: { module: "./transport" },
       list: { module: "./transport" },
+      requestKeys,
     },
     ...patch,
   });
@@ -88,4 +90,20 @@ test("what a custom transport cannot carry is reported and left out, not sent an
   const [tenant, form] = transport.calls;
   assert.deepEqual(Object.keys(tenant.config).sort(), ["params"]);
   assert.deepEqual(Object.keys(form.config), ["isFormData"]);
+});
+
+test("a transport that types its headers as text takes every header, a number included", async () => {
+  // MyConfig says `headers?: Record<string, string>`: this compiles only if the
+  // written code turns the number of `X-Page` into text itself.
+  const { js, require, transport } = await layer(
+    "custom-headers",
+    { input: EDGES_FIXTURE },
+    { headers: "headers" },
+  );
+  const edges = require(join(js, "edges.js"));
+  await edges.getTenant({}, { "X-Tenant-Id": "t", "X-Page": 2 });
+  await edges.getTenant({}, { "X-Tenant-Id": "t" });
+  const [both, one] = transport.calls.map(({ config }) => config.headers);
+  assert.deepEqual(both, { "X-Tenant-Id": "t", "X-Page": "2" });
+  assert.deepEqual(one, { "X-Tenant-Id": "t" });
 });

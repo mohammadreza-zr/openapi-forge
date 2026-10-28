@@ -34,8 +34,8 @@ const svelte = {
   },
 };
 
-test("svelte-query hooks follow state, wait for a missing id and stop with their component", async () => {
-  const dir = await generateTo("svelte", { library: "svelte-query" });
+for (const http of ["fetch", "axios"]) test(`svelte-query hooks follow state, wait for a missing id and stop with their component over ${http}`, async () => {
+  const dir = await generateTo(`svelte-${http}`, { library: "svelte-query", http });
   const entry = await bundle(dir, join(root, "test/probes/svelte.js"), {
     plugins: [svelte],
     conditions: ["browser"],
@@ -64,9 +64,10 @@ test("svelte-query hooks follow state, wait for a missing id and stop with their
   }
 });
 
-test("svelte-query hooks take header arguments, also for an infinite list", async () => {
-  const dir = await generateTo("svelte-edges", {
+for (const http of ["fetch", "axios"]) test(`svelte-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
+  const dir = await generateTo(`svelte-edges-${http}`, {
     library: "svelte-query",
+    http,
     infinite: true,
     input: EDGES_FIXTURE,
   });

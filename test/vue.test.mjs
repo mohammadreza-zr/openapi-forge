@@ -12,7 +12,7 @@ globalThis.window = globalThis;
 import { compileCjs, generateTo, sleep, until } from "./harness.mjs";
 import { petApi, serve } from "./server.mjs";
 
-describe("the vue-query hooks", () => {
+for (const http of ["fetch", "axios"]) describe(`the vue-query hooks over ${http}`, () => {
   let server;
   let vue;
   let app;
@@ -20,8 +20,9 @@ describe("the vue-query hooks", () => {
   let client;
 
   before(async () => {
-    const dir = await generateTo("vue", {
+    const dir = await generateTo(`vue-${http}`, {
       library: "vue-query",
+      http,
       infinite: true,
     });
     const js = compileCjs(dir);
@@ -105,6 +106,6 @@ describe("the vue-query hooks", () => {
       "the slow request",
     );
     scope.stop();
-    await assert.rejects(pending, /abort/i);
+    await assert.rejects(pending, /abort|cancel/i);
   });
 });

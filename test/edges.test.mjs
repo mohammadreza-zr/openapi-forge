@@ -54,7 +54,12 @@ describe("the code that is written", () => {
       /export type GetTenantHeaders = \{\s*"X-Tenant-Id": string;\s*"X-Page"\?: number;\s*\}/,
     );
     assert.match(text, /headers: GetTenantHeaders,\s*config\?/);
-    assert.match(text, /headers: \{ \.\.\.config\?\.headers, \.\.\.headers \}/);
+    // Text headers are spread as they are; a number is written as text on the way out.
+    assert.match(text, /\.\.\.Object\.fromEntries\(\s*Object\.entries\(headers\)[\s\S]*?String\(value\)/);
+    assert.match(
+      text,
+      /listPages\([^)]*\)\s*\{[\s\S]*?headers: \{ \.\.\.config\?\.headers, \.\.\.headers \}/,
+    );
     assert.match(text, /getTenant: \(params: GetTenantQuery, headers: GetTenantHeaders\)/);
     assert.match(text, /export function useGetTenantQuery\([^)]*headers: GetTenantHeaders/s);
     // Authorization is the transport's, as OpenAPI says.

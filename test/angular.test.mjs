@@ -9,8 +9,8 @@ import { bundle, generateTo, root } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
 import { edgesApi, petApi, serve } from "./server.mjs";
 
-test("angular-query hooks follow a signal, wait for a missing id and stop with their injector", async () => {
-  const dir = await generateTo("angular", { library: "angular-query" });
+for (const http of ["fetch", "axios", "angular"]) test(`angular-query hooks follow a signal, wait for a missing id and stop with their injector over ${http}`, async () => {
+  const dir = await generateTo(`angular-${http}`, { library: "angular-query", http });
   const entry = await bundle(dir, join(root, "test/probes/angular.ts"));
   const server = await serve(petApi);
   try {
@@ -21,6 +21,7 @@ test("angular-query hooks follow a signal, wait for a missing id and stop with t
         join(root, "test/probes/dom.mjs"),
         entry,
         String(server.port),
+        http,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -35,9 +36,10 @@ test("angular-query hooks follow a signal, wait for a missing id and stop with t
   }
 });
 
-test("angular-query hooks take header arguments, also for an infinite list", async () => {
-  const dir = await generateTo("angular-edges-query", {
+for (const http of ["fetch", "axios", "angular"]) test(`angular-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
+  const dir = await generateTo(`angular-edges-query-${http}`, {
     library: "angular-query",
+    http,
     infinite: true,
     input: EDGES_FIXTURE,
   });
@@ -46,7 +48,7 @@ test("angular-query hooks take header arguments, also for an infinite list", asy
   try {
     const child = spawn(
       process.execPath,
-      ["--import", join(root, "test/probes/dom.mjs"), entry, String(server.port)],
+      ["--import", join(root, "test/probes/dom.mjs"), entry, String(server.port), http],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let output = "";

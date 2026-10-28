@@ -54,9 +54,9 @@ async function main() {
   const created = await handle.mutation.mutateAsync({ body: { name: "Rex" } });
   assert.deepEqual(created, { id: "new", name: "Rex" });
 
-  // Destroying the component aborts a request still in flight.
+  // Destroying the component aborts a request still in flight (fetch says "aborted", axios "canceled").
   const pending = handle.mutation.mutateAsync({ body: { name: "slow" } });
-  const settled = assert.rejects(pending, /abort/i);
+  const settled = assert.rejects(pending, /abort|cancel/i);
   await new Promise((resolve) => setTimeout(resolve, 50));
   unmount(component);
   await settled;

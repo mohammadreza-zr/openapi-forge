@@ -10,7 +10,19 @@ import { createServer } from "node:http";
  */
 export async function serve(reply) {
   const seen = [];
+  // A browser (or jsdom) asks first, with OPTIONS, before it sends a request
+  // with headers of its own: answer as a real API would, and keep it out of `seen`.
+  const cors = { "access-control-allow-origin": "*" };
   const server = createServer(async (request, response) => {
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, {
+        ...cors,
+        "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE",
+        "access-control-allow-headers":
+          request.headers["access-control-request-headers"] ?? "*",
+      });
+      return response.end();
+    }
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     if (request.url === "/asked") {
@@ -31,7 +43,7 @@ export async function serve(reply) {
     };
     seen.push(entry);
     const { status = 200, body, type = "application/json" } = await reply(entry);
-    response.writeHead(status, { "content-type": type });
+    response.writeHead(status, { ...cors, "content-type": type });
     response.end(
       typeof body === "string" || Buffer.isBuffer(body)
         ? body

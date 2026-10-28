@@ -2,7 +2,8 @@
 // bed. Usage: node --import dom.mjs bundle.mjs <port>. Exits non-zero on failure.
 import "@angular/compiler";
 import assert from "node:assert/strict";
-import { provideZonelessChangeDetection, signal } from "@angular/core";
+import { HttpClient, provideHttpClient, withFetch } from "@angular/common/http";
+import { inject, provideZonelessChangeDetection, signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import {
   BrowserTestingModule,
@@ -15,7 +16,7 @@ import {
 import { configureClient } from "@api/client";
 import * as pets from "@api/pets";
 
-const [port] = process.argv.slice(2);
+const [port, http] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
 configureClient({ baseUrl: `${base}/api/v1` });
 
@@ -38,8 +39,18 @@ async function main() {
   });
   TestBed.initTestEnvironment(BrowserTestingModule, platformBrowserTesting());
   TestBed.configureTestingModule({
-    providers: [provideZonelessChangeDetection(), provideTanStackQuery(client)],
+    providers: [
+      provideZonelessChangeDetection(),
+      provideTanStackQuery(client),
+      ...(http === "angular" ? [provideHttpClient(withFetch())] : []),
+    ],
   });
+  // The Angular HTTP client sends through the app's own HttpClient.
+  if (http === "angular") {
+    configureClient({
+      instance: TestBed.runInInjectionContext(() => inject(HttpClient)),
+    });
+  }
 
   const id = signal("1");
   const later = signal<string | undefined>(undefined);
@@ -72,7 +83,7 @@ async function main() {
 
   // Destroying the injector aborts a request still in flight.
   const pending = mutation.mutateAsync({ body: { name: "slow" } });
-  const settled = assert.rejects(pending, /abort/i);
+  const settled = assert.rejects(pending, /abort|cancel/i);
   await new Promise((resolve) => setTimeout(resolve, 50));
   TestBed.resetTestingModule();
   await settled;

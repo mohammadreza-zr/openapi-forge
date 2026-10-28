@@ -70,7 +70,7 @@ async function main() {
 
   // Disposing the owner aborts a request still in flight.
   const pending = mutation.mutateAsync({ body: { name: "slow" } });
-  const settled = assert.rejects(pending, /abort/i);
+  const settled = assert.rejects(pending, /abort|cancel/i);
   await new Promise((resolve) => setTimeout(resolve, 50));
   dispose();
   await settled;

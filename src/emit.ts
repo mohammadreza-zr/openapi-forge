@@ -605,6 +605,27 @@ export function emit(
   const bodyTypeName = (operation: OperationInfo) =>
     typeFor(operation.bodySchema, `${pascalCase(operation.name)}Body`);
 
+  /**
+   * A header is text on the wire. When every declared header is already a
+   * string they are spread as they are; otherwise (a number, a flag, a list)
+   * the values are written with `String()` here, so a transport that types
+   * its headers `Record<string, string>` takes them as they are.
+   */
+  function headerSpread(operation: OperationInfo) {
+    const isText = (type: string) =>
+      /^(string|"[^"]*"(\s\|\s"[^"]*")*)$/.test(type);
+    if (operation.headerParams.every((item) => isText(paramType(item)))) {
+      return "...headers";
+    }
+    return [
+      "...Object.fromEntries(",
+      "      Object.entries(headers)",
+      "        .filter(([, value]) => value !== undefined)",
+      "        .map(([name, value]) => [name, String(value)]),",
+      "    )",
+    ].join("\n");
+  }
+
   /** How a body goes out, by the media type the document gives it. */
   function bodyKind(media: string | null) {
     if (!media || media.includes("json")) return "json";
@@ -984,7 +1005,7 @@ export function emit(
     if (sendsForm) configLines.push(`${keys.formData}: true`);
     if (keys.headers) {
       const entries = [
-        ...(operation.headerParams.length ? ["...headers"] : []),
+        ...(operation.headerParams.length ? [headerSpread(operation)] : []),
         ...(kind === "urlencoded" || kind === "raw"
           ? [`"Content-Type": ${JSON.stringify(operation.bodyMediaType)}`]
           : []),
