@@ -393,7 +393,7 @@ export function emit(
           problems.set(`${at}: skipped`, {
             where: at,
             message:
-              "was skipped: it takes a request body, which the custom client cannot send with DELETE (`runtime.requestKeys.body`)",
+              "was skipped: it takes a request body, which the client cannot send with DELETE (`runtime.requestKeys.body`)",
           });
           continue;
         }

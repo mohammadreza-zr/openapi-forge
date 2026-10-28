@@ -93,7 +93,7 @@ export type LibraryName =
   | "swr";
 
 /** What the built-in runtime sends its requests with. */
-export type HttpClientName = "fetch" | "axios" | "angular";
+export type HttpClientName = "fetch" | "axios" | "angular" | "api-client";
 
 export interface RuntimeConfig {
   callers: {

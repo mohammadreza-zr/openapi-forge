@@ -38,7 +38,7 @@ Options
   --target <hooks|requests>   hooks too, or request functions only
   --library <name>       the library the hooks wrap: react-query (default), vue-query,
                          svelte-query, solid-query, angular-query, swr
-  --http <fetch|axios|angular>   what the built-in runtime sends requests with
+  --http <fetch|axios|angular|api-client>   what the built-in runtime sends requests with
   --client <builtin|custom>   write a runtime, or use your own transport
   --headers "K: v;K2: v" request headers for a URL input
   --insecure             skip TLS verification (local dev only, never in CI)
@@ -82,7 +82,7 @@ export default defineConfig({
 
   // The library the hooks wrap: "react-query", "vue-query", "svelte-query",
   // "solid-query", "angular-query" or "swr". With the built-in runtime,
-  // "fetch", "axios" or Angular's "angular" (HttpClient) sends the requests.
+  // "fetch", "axios", Angular's "angular" (HttpClient) or "api-client" (@mrzr/api-client) sends the requests.
   library: "react-query",
   http: "fetch",
 

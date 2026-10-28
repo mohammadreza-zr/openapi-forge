@@ -205,15 +205,23 @@ export function resolveOptions(
   }
   const base = { ...DEFAULTS, runtime: builtinRuntime(library) };
   const merged = merge(merge(base, fileConfig), cliOptions);
+  const named = (key: "headers" | "envelope" | "body") =>
+    cliOptions.runtime?.requestKeys?.[key] ??
+    fileConfig.runtime?.requestKeys?.[key];
   // A custom transport knows nothing of the keys the built-in one reads, so
   // they are only written for it when the project names them.
   if (merged.client === "custom") {
     for (const key of ["headers", "envelope", "body"] as const) {
-      const named =
-        cliOptions.runtime?.requestKeys?.[key] ??
-        fileConfig.runtime?.requestKeys?.[key];
-      if (named === undefined) merged.runtime.requestKeys[key] = false;
+      if (named(key) === undefined) merged.runtime.requestKeys[key] = false;
     }
+  }
+  // `@mrzr/api-client`'s `delete` takes no body, so a DELETE with one is left out.
+  if (
+    merged.client === "builtin" &&
+    merged.http === "api-client" &&
+    named("body") === undefined
+  ) {
+    merged.runtime.requestKeys.body = false;
   }
   if (!["builtin", "custom"].includes(merged.client)) {
     throw new Error(

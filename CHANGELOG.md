@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- `http: "api-client"` (`--http api-client`): the built-in runtime sends with [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client), so its token refresh, tab sync and plugins apply — `configureClient({ instance: createClient({ … }) })`, the way axios and Angular take theirs. Bodies and answers are handled by the same code as in the other clients. Its `delete` takes no body, so a `DELETE` operation with one is left out and reported. This replaces the adapter the 0.1.0 README showed for a custom transport.
+- `doctor` looks for `@mrzr/api-client` when it is the chosen client; the conformance matrix is 9 clients × 62 documents, and every hook library is run over it.
+
 ## 0.1.0
 
 First release.

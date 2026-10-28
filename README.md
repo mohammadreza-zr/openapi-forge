@@ -7,7 +7,7 @@ Generate a typed TypeScript API layer from OpenAPI / Swagger documents:
 - **route + query-key factories** — each URL is written once; keys point at it
 - **hooks for the library you use** — React, Vue, Svelte, Solid or Angular Query, or SWR: a query hook per read, a mutation hook per write (optional)
 - **several services, one layer** — merge many documents; conflicts are decided once and committed
-- **a runtime of its own, or yours** — a small `fetch`, axios or Angular `HttpClient` client is written for you, or the code imports your transport
+- **a runtime of its own, or yours** — a small `fetch`, axios, Angular `HttpClient` or [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) client is written for you, or the code imports your transport
 
 Output is deterministic and prettier-formatted, so `--check` can fail CI when the committed layer is stale.
 
@@ -44,7 +44,7 @@ Two independent choices. `library` is what the hooks wrap; `http` is what the bu
 ```js
 export default defineConfig({
   library: "vue-query",   // see the table
-  http: "axios",          // "fetch" (default) | "axios" | "angular"
+  http: "axios",          // "fetch" (default) | "axios" | "angular" | "api-client"
   target: "hooks",        // "requests" stops at plain request functions
 });
 ```
@@ -73,6 +73,7 @@ A path id that is still `undefined` makes the query wait instead of asking for `
 | `fetch` (default) | the platform's `fetch` | nothing |
 | `axios` | an axios instance, `configureClient({ instance })` | `axios` |
 | `angular` | Angular's `HttpClient`, so its interceptors apply; `configureClient({ instance: inject(HttpClient) })` at start-up | `@angular/common`, `rxjs` |
+| `api-client` | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client): token refresh, tab sync, plugins; `configureClient({ instance: createClient({ … }) })` | `@mrzr/api-client` |
 
 Coming from Orval, its `client` values map like this: `react-query`, `vue-query`, `svelte-query`, `solid-query`, `angular-query` and `swr` are the `library` values above; `fetch`, `axios` and `angular` are `http` values (with `target: "requests"` for plain functions); `zod` is `zod: true`.
 
@@ -83,7 +84,7 @@ Notes that follow from what each library offers:
 - **SWR** cannot cancel a request, so the `signal` a fetcher gets never fires; an infinite list asks for page `n` at `n * pageSize`.
 - **Solid**: the hook options leave out `initialData` — `createQuery` has one overload for options that set it and one for options that do not, and options that may do either match neither.
 - **Angular**: `inject…` functions need an injection context — a constructor, a field initialiser, a service, `runInInjectionContext`.
-- **axios** and **angular**: the instance is `configureClient({ instance })`; interceptors and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so the three behave alike. An aborted request rejects in every client, but with the client's own error: `AbortError` for `fetch`, `CanceledError` for axios (`axios.isCancel`).
+- **axios**, **angular** and **api-client**: the instance is `configureClient({ instance })`; interceptors, plugins, tokens and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so the three behave alike. An aborted request rejects in every client, but with the client's own error: `AbortError` for `fetch`, `CanceledError` for axios (`axios.isCancel`).
 
 ## Commands
 
@@ -96,7 +97,7 @@ Notes that follow from what each library offers:
 | `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
 
 Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
-`--target hooks|requests`, `--library <name>`, `--http fetch|axios|angular`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
+`--target hooks|requests`, `--library <name>`, `--http fetch|axios|angular|api-client`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
 `--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`, `--watch`, `--interval <s>`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`.
 Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`,
 `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
@@ -116,7 +117,7 @@ export default defineConfig({
   client: "builtin",              // "builtin" | "custom"
   target: "hooks",                // "hooks" | "requests"
   library: "react-query",         // "vue-query" | "svelte-query" | "solid-query" | "angular-query" | "swr"
-  http: "fetch",                  // "axios" | "angular" — for the built-in runtime
+  http: "fetch",                  // "axios" | "angular" | "api-client" — for the built-in runtime
   tags: { include: [], exclude: [] },
   headers: { Authorization: "Bearer …" },   // for a URL input
   tls: { insecure: false, ca: "internal-ca.pem" },
@@ -172,83 +173,6 @@ rides in (`apiDelete(route, config)` takes none of its own); a custom transport 
 `requestKeys.headers` / `requestKeys.envelope` / `requestKeys.body` name a key, and until then a header
 parameter is reported instead of being sent and a `DELETE` with a body is skipped with a warning.
 
-### Using `@mrzr/api-client`
-
-[`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (token refresh, tab sync) is a custom transport: its `RequestConfig` already has `params`, `addTemplateToUrl`, `isFormData`, `baseUrl`, `headers` and `signal`, which is what the generated calls pass. It leaves one thing to the adapter — the wire format of a body, because the generated code hands over a plain object — so the adapter below turns it into a form, `FormData` or text. It is compiled and run against the real package by `npm test`.
-
-```js
-export default defineConfig({
-  client: "custom",
-  runtime: {
-    callers: { module: "./transport" },
-    types: { module: "./transport", request: "GeneratedRequestConfig" },
-    envelope: { module: "./transport" },
-    list: { module: "./transport" },
-    requestKeys: { headers: "headers" },   // header parameters and a non-JSON Content-Type
-  },
-});
-```
-
-```ts
-import { createClient, type RequestConfig } from "@mrzr/api-client";
-
-export const api = createClient({ baseUrl: "https://api.example.com", worker: false });
-
-// The types the generated code imports.
-export type GeneratedRequestConfig<T = unknown> = Omit<
-  RequestConfig<T>,
-  "params" | "addTemplateToUrl" | "fullData" | "isFormData"
->;
-export type ApiEnvelope<T> = { result: boolean; code?: number; message?: unknown; data: T };
-export type ApiListData<T> = { count: number; list: T[] };
-
-/** One part per list item, a JSON part per object, a file as it is. */
-function toFormData(fields: object) {
-  const form = new FormData();
-  for (const [name, value] of Object.entries(fields)) {
-    for (const item of Array.isArray(value) ? value : [value]) {
-      if (item == null) continue;
-      form.append(name, item instanceof Blob ? item : typeof item === "object" ? JSON.stringify(item) : String(item));
-    }
-  }
-  return form;
-}
-
-/** The generated code hands over a plain object: the wire format is the adapter's to choose. */
-function send<T>(body: unknown, config?: RequestConfig<T>): [unknown, RequestConfig<T>] {
-  const type = config?.headers?.["Content-Type"] ?? "";
-  if (body == null) return [undefined, { ...config }];
-  if (config?.isFormData) return [toFormData(body), { ...config }];
-  if (type.startsWith("application/x-www-form-urlencoded")) {
-    const form = new URLSearchParams();
-    for (const [name, value] of Object.entries(body)) {
-      for (const item of Array.isArray(value) ? value : [value]) {
-        if (item != null) form.append(name, String(item));
-      }
-    }
-    return [form.toString(), { ...config, stringifyBody: false }];
-  }
-  // Text and bytes: sent as they are.
-  if (type && !type.includes("json")) return [body, { ...config, stringifyBody: false }];
-  return [body, { ...config }];
-}
-
-export const apiGet = async <T>(route: string, config?: RequestConfig<T>) =>
-  (await api.get<T>(route, { ...config, throwError: true })).data as T;
-export const apiDelete = async <T>(route: string, config?: RequestConfig<T>) =>
-  (await api.delete<T>(route, { ...config, throwError: true })).data as T;
-
-const withBody =
-  (verb: "post" | "put" | "patch") =>
-  async <T>(route: string, body: unknown, config?: RequestConfig<T>) => {
-    const [data, own] = send(body, config);
-    return (await api[verb]<T>(route, data, { ...own, throwError: true })).data as T;
-  };
-export const apiPost = withBody("post");
-export const apiPut = withBody("put");
-export const apiPatch = withBody("patch");
-```
-
 ### The envelope
 
 If an answer is `{ result, code, message, data }`, the generated types and calls speak only of
@@ -278,7 +202,7 @@ The built-in client writes what the document asks for, and reports (never silent
 | `text/plain`, `application/octet-stream`, other non-JSON bodies | sent as they are, with that `Content-Type` |
 | an answer | read by its `Content-Type`: JSON parsed, `text/*` as a string, anything else a `Blob`; an empty answer is `null` |
 
-With the axios and Angular clients the answer reaches interceptors as bytes (an `ArrayBuffer`), because it is read by content type afterwards, the same way for every client.
+With the axios, Angular and api-client clients the answer reaches interceptors as bytes (an `ArrayBuffer`), because it is read by content type afterwards, the same way for every client.
 
 ## Input it understands
 
@@ -288,9 +212,9 @@ What a document leaves out never breaks the output: that spot is typed `unknown`
 
 ## Tested against real documents
 
-`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 8 clients × 61 documents pass.
+`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 9 clients × 62 documents pass.
 
-The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios and Angular `HttpClient` clients are called against a local HTTP server (query strings, path encoding, JSON, multipart and form bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort, bytes and text answers, a payload with a `result` field — and an interceptor, for Angular). Every hook library is executed (over `fetch` and axios, and Angular Query also over `HttpClient`) against the same kind of server: React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument (ref, signal, getter, state) moves the query, a missing id waits, a mutation sends its variables, and tearing down the owner aborts a mutation still in flight; a header argument (a ref, a getter, a signal, state) is sent and moves the query, and an infinite list pages and sends its header with every page. A custom transport is compiled with its own config type and called with only the keys it has.
+The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios, Angular `HttpClient` and `@mrzr/api-client` clients are called against a local HTTP server (query strings, path encoding, JSON, multipart and form bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort, bytes and text answers, a payload with a `result` field — and an interceptor, for Angular). Every hook library is executed (over `fetch`, axios and `@mrzr/api-client`, and Angular Query also over `HttpClient`) against the same kind of server: React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument (ref, signal, getter, state) moves the query, a missing id waits, a mutation sends its variables, and tearing down the owner aborts a mutation still in flight; a header argument (a ref, a getter, a signal, state) is sent and moves the query, and an infinite list pages and sends its header with every page. A custom transport is compiled with its own config type and called with only the keys it has.
 
 ## How it compares
 
@@ -298,7 +222,7 @@ Measured, not claimed: the same 60 documents through Orval 8.45 (`--client react
 
 | | openapi-forge | Orval |
 | --- | --- | --- |
-| Clients | `fetch` or axios, or your own transport; React, Vue, Svelte, Solid and Angular Query, SWR | the same, plus Angular `HttpClient` services, Hono, MCP |
+| Clients | `fetch`, axios, Angular `HttpClient` or `@mrzr/api-client`, or your own transport; React, Vue, Svelte, Solid and Angular Query, SWR | the same, plus Angular `HttpClient` services, Hono, MCP |
 | Mocks (MSW), Faker | no, by design | yes |
 | What changed in the new spec | `pull` and `diff` report breaking / risky / safe changes by hook name | not built in |
 | Several backend services in one layer | merged; conflicts decided once and committed | a separate output per spec |

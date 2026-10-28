@@ -74,6 +74,76 @@ async function send(
 }
 `,
   },
+  "api-client": {
+    imports: 'import { type ApiClient, createClient } from "@mrzr/api-client";',
+    packages: ["@mrzr/api-client"],
+    setting: {
+      type: "/** Tokens, refresh, plugins and defaults live on the client — replace it to bring your own: `configureClient({ instance: createClient({ … }) })`. */\n  instance: ApiClient;",
+      initial: 'instance: createClient({ baseUrl: "", worker: false })',
+    },
+    send: `
+async function send(
+  method: string,
+  url: string,
+  headers: Record<string, string>,
+  payload: BodyInit | undefined,
+  signal: AbortSignal | undefined,
+): Promise<Answer> {
+  const api = settings.instance;
+  const config = {
+    headers,
+    signal,
+    // The bytes are read below by content type, and the status is judged
+    // there too, the same way for every HTTP client.
+    responseType: "arrayBuffer" as const,
+    fullData: true,
+    throwError: false,
+    // The body is already what goes on the wire: a string, a form, bytes.
+    stringifyBody: false,
+    isFormData: payload instanceof FormData,
+  };
+  const response =
+    method === "GET"
+      ? await api.get<ArrayBuffer>(url, config)
+      : method === "DELETE"
+        ? await api.delete<ArrayBuffer>(url, config)
+        : await api[method.toLowerCase() as "post" | "put" | "patch"]<ArrayBuffer>(
+            url,
+            payload,
+            config,
+          );
+  // A canceled request resolves with \`canceled\`; here it rejects, as in the others.
+  if (response.canceled) {
+    throw (
+      signal?.reason ?? new DOMException("This operation was aborted", "AbortError")
+    );
+  }
+  // A status of 0 is no answer at all — the network failed.
+  if (response.statusCode === 0) {
+    throw response.error ?? new Error(response.message);
+  }
+  // A failed answer with a textual type arrives already parsed (so that its
+  // message and errors are filled in); back to bytes, for the one reader.
+  const data: unknown = response.data;
+  const bytes =
+    data instanceof ArrayBuffer
+      ? data
+      : new TextEncoder().encode(
+          data === undefined
+            ? ""
+            : typeof data === "string"
+              ? data
+              : JSON.stringify(data),
+        );
+  return {
+    status: response.statusCode,
+    statusText: response.message,
+    contentType: response.headers?.["content-type"] ?? null,
+    bytes,
+  };
+}
+`,
+  },
   angular: {
     imports: `import { HttpClient, HttpErrorResponse } from "@angular/common/http";
 import { EmptyError, Observable, firstValueFrom, takeUntil } from "rxjs";`,

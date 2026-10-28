@@ -12,7 +12,7 @@ import { compileCjs, generateTo, until } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
 import { edgesApi, serve } from "./server.mjs";
 
-for (const http of ["fetch", "axios"]) describe(`header parameters in the vue-query hooks over ${http}`, () => {
+for (const http of ["fetch", "axios", "api-client"]) describe(`header parameters in the vue-query hooks over ${http}`, () => {
   let server;
   let vue;
   let app;

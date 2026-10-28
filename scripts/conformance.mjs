@@ -31,6 +31,7 @@ const quiet = (fn) => {
 const variants = [
   ...LIBRARY_NAMES.map((library) => ({ library, http: "fetch" })),
   { library: "react-query", http: "axios" },
+  { library: "react-query", http: "api-client" },
   { library: "angular-query", http: "angular" },
 ].filter((variant) => !only || variant.library === only);
 

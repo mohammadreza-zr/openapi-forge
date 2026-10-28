@@ -70,8 +70,10 @@ describe("the React hooks", () => {
   for (const [library, http] of [
     ["react-query", "fetch"],
     ["react-query", "axios"],
+    ["react-query", "api-client"],
     ["swr", "fetch"],
     ["swr", "axios"],
+    ["swr", "api-client"],
   ]) {
     describe(`${library} over ${http}`, () => {
       let api;

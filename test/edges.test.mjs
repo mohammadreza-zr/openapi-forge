@@ -116,7 +116,7 @@ describe("the code that is written", () => {
   });
 });
 
-for (const http of ["fetch", "axios"]) {
+for (const http of ["fetch", "axios", "api-client"]) {
   describe(`the ${http} client against a server`, () => {
     let api;
     let backend;
@@ -232,7 +232,12 @@ for (const http of ["fetch", "axios"]) {
       assert.equal(last().body, "hello");
     });
 
-    test("a DELETE sends its body", async () => {
+    test("a DELETE sends its body, where the client can", async (t) => {
+      // `@mrzr/api-client`'s `delete` takes no body: the operation is left out.
+      if (http === "api-client") {
+        assert.equal(api.edges.remove, undefined);
+        return t.skip("api-client's delete takes no body");
+      }
       await api.edges.remove({ ids: ["a", "b"] });
       assert.equal(last().method, "DELETE");
       assert.match(last().headers["content-type"], /^application\/json/);

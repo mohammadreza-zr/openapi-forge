@@ -245,7 +245,7 @@ test("an unknown library or http client is named", () => {
   );
   assert.throws(
     () => resolveOptions({ http: "ky" }),
-    /http must be one of fetch, axios, angular/,
+    /http must be one of fetch, axios, api-client, angular/,
   );
 });
 
@@ -299,4 +299,34 @@ test("doctor looks for the library's packages and the transport's", async () => 
     .map((item) => item.message);
   assert.ok(missing.some((message) => message.includes("@angular/common")));
   assert.ok(missing.some((message) => message.includes("rxjs")));
+
+  const apiClient = await doctor(
+    resolveOptions({ http: "api-client", target: "requests", input: "x.json" }),
+    { cwd: dir },
+  );
+  assert.ok(
+    apiClient.some(
+      (item) =>
+        item.level === "fail" && item.message.includes("@mrzr/api-client"),
+    ),
+  );
+});
+
+test("api-client's delete takes no body, so a DELETE with one is left out unless the project says otherwise", () => {
+  assert.equal(resolveOptions({ http: "api-client" }).runtime.requestKeys.body, false);
+  assert.equal(resolveOptions({ http: "fetch" }).runtime.requestKeys.body, "body");
+  assert.equal(
+    resolveOptions({
+      http: "api-client",
+      runtime: { requestKeys: { body: "data" } },
+    }).runtime.requestKeys.body,
+    "data",
+  );
+});
+
+test("the api-client client holds a configurable instance and judges the answer like the others", () => {
+  const client = runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts");
+  assert.match(client, /import \{ type ApiClient, createClient \} from "@mrzr\/api-client"/);
+  assert.match(client, /instance: ApiClient/);
+  assert.match(client, /createClient\(\{ baseUrl: "", worker: false \}\)/);
 });

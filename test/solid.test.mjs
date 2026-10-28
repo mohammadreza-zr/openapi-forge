@@ -10,7 +10,7 @@ import { compileCjs, generateTo, root } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
 import { edgesApi, petApi, serve } from "./server.mjs";
 
-for (const http of ["fetch", "axios"]) test(`solid-query hooks follow a signal, wait for a missing id and stop with their owner over ${http}`, async () => {
+for (const http of ["fetch", "axios", "api-client"]) test(`solid-query hooks follow a signal, wait for a missing id and stop with their owner over ${http}`, async () => {
   const dir = await generateTo(`solid-${http}`, { library: "solid-query", http });
   compileCjs(dir);
   const server = await serve(petApi);
@@ -36,7 +36,7 @@ for (const http of ["fetch", "axios"]) test(`solid-query hooks follow a signal, 
   }
 });
 
-for (const http of ["fetch", "axios"]) test(`solid-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
+for (const http of ["fetch", "axios", "api-client"]) test(`solid-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
   const dir = await generateTo(`solid-edges-${http}`, {
     library: "solid-query",
     http,

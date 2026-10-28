@@ -19,7 +19,7 @@ async function load(http) {
   };
 }
 
-for (const http of ["fetch", "axios"]) {
+for (const http of ["fetch", "axios", "api-client"]) {
   describe(`the ${http} client`, () => {
     let api;
     let backend;

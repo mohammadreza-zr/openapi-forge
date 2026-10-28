@@ -12,7 +12,7 @@ globalThis.window = globalThis;
 import { compileCjs, generateTo, sleep, until } from "./harness.mjs";
 import { petApi, serve } from "./server.mjs";
 
-for (const http of ["fetch", "axios"]) describe(`the vue-query hooks over ${http}`, () => {
+for (const http of ["fetch", "axios", "api-client"]) describe(`the vue-query hooks over ${http}`, () => {
   let server;
   let vue;
   let app;
