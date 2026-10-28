@@ -1,65 +1,148 @@
-# Publishes to npm when a push to main carries a version that is not on npm yet.
-# A push that leaves `version` in package.json alone changes nothing here.
-#
-# No token is stored: npm trusted publishing lets this workflow publish by its
-# own identity. Set it up once on npmjs.com — the package's Settings → Trusted
-# Publisher → GitHub Actions: user `mohammadreza-zr`, repository
-# `openapi-forge`, workflow filename `release.yml`.
 name: release
+
+# Tag-driven releases:
+#
+#   npm version patch|minor|major
+#   git push --follow-tags
+#
+# Publishing uses npm trusted publishing (OIDC): there is no NPM_TOKEN secret.
+# Set it up once on npmjs.com — the package's Settings → Trusted Publisher →
+# GitHub Actions: user `mohammadreza-zr`, repository `openapi-forge`, workflow
+# filename `release.yml`. `id-token: write` lets npm mint a short-lived
+# credential at publish time, and --provenance signs a link to this exact run.
 on:
   push:
-    branches: [main]
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.2.1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  version:
+  # Fail before any publishing side effect if the tag and package.json disagree.
+  guard:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     outputs:
-      unpublished: ${{ steps.check.outputs.unpublished }}
+      version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
       - id: check
+        name: Tag must match package.json version
         run: |
-          name=$(node -p 'require("./package.json").name')
-          version=$(node -p 'require("./package.json").version')
-          if out=$(npm view "$name@$version" version 2>&1); then
-            echo "$name@$version is on npm already: nothing to publish."
-            echo "unpublished=false" >> "$GITHUB_OUTPUT"
-          elif grep -q E404 <<<"$out"; then
-            echo "$name@$version is not on npm yet."
-            echo "unpublished=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "$out"
+          set -euo pipefail
+          raw="${{ inputs.tag || github.ref_name }}"
+          tag_version="${raw#v}"
+          pkg_version="$(node -p "require('./package.json').version")"
+
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag $raw implies version $tag_version but package.json says $pkg_version."
+            echo "::error::Fix the version (or the tag) so the two agree, then tag again."
             exit 1
           fi
 
-  ci:
-    needs: version
-    if: needs.version.outputs.unpublished == 'true'
-    uses: ./.github/workflows/ci.yml
+          echo "version=$pkg_version" >> "$GITHUB_OUTPUT"
+          echo "✓ Releasing v$pkg_version"
 
-  publish:
-    needs: [version, ci]
-    if: needs.version.outputs.unpublished == 'true'
+  verify:
+    name: verify (node ${{ matrix.node }})
+    needs: guard
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write # the identity npm trusts
+    strategy:
+      fail-fast: true
+      matrix:
+        node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run conformance
+
+  publish:
+    name: publish to npm
+    needs: [guard, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # required for OIDC trusted publishing + provenance
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
           registry-url: https://registry.npmjs.org
-      # Trusted publishing needs npm 11.5.1 or newer.
-      - run: npm install -g npm@^11.5.1
+
+      # Runners can ship an npm too old to perform the OIDC token exchange,
+      # which surfaces as a misleading E404 on publish.
+      - name: Use an npm new enough for trusted publishing
+        run: npm install -g npm@latest
+
+      # actions/setup-node always writes `_authToken=${NODE_AUTH_TOKEN}` into
+      # .npmrc when registry-url is set. With no token secret that expands to an
+      # empty string, npm treats auth as "already configured" and never starts
+      # the OIDC exchange — failing with ENEEDAUTH/E404. Drop the line.
+      - name: Clear the placeholder auth line so OIDC is used
+        run: |
+          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          [ -f "$npmrc" ] && sed -i '/_authToken/d' "$npmrc"
+          echo "--- effective .npmrc ---"
+          cat "$npmrc" 2>/dev/null || echo "(none)"
+
       - run: npm ci
       - run: npm run build
-      # `prepublishOnly` would run the tests again; the `ci` job has just run them.
-      - run: npm publish --provenance --ignore-scripts
+
+      # The package is ESM-only (a CLI and a config helper), so the CommonJS
+      # resolution that `attw` warns about is ignored; the rest must be green.
+      - name: Verify type resolution before publishing
+        run: npx --yes @arethetypeswrong/cli --pack . --profile esm-only
+
+      # No NODE_AUTH_TOKEN: setting one makes npm take the legacy token path
+      # instead of OIDC. --ignore-scripts because `prepublishOnly` would run the
+      # tests again; the `verify` job has just run them on three Node versions.
+      - name: Publish
+        run: npm publish --provenance --access public --ignore-scripts
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ needs.guard.outputs.version }}" \
+            --title "v${{ needs.guard.outputs.version }}" \
+            --generate-notes \
+            --verify-tag
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published \`@mrzr/openapi-forge@${{ needs.guard.outputs.version }}\` 🎉"
+            echo
+            echo "- npm: https://www.npmjs.com/package/@mrzr/openapi-forge/v/${{ needs.guard.outputs.version }}"
+            echo "- Provenance: signed via OIDC trusted publishing"
+            echo
+            echo "Verify with \`npm audit signatures\` after installing."
+          } >> "$GITHUB_STEP_SUMMARY"
