@@ -1,5 +1,8 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_call: # release.yml tests with this before it publishes
 jobs:
   test:
     runs-on: ubuntu-latest
