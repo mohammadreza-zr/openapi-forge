@@ -9,7 +9,8 @@ import { test } from "node:test";
 import { compile, compileModule } from "svelte/compiler";
 
 import { bundle, generateTo, root } from "./harness.mjs";
-import { petApi, serve } from "./server.mjs";
+import { EDGES_FIXTURE } from "./helpers.mjs";
+import { edgesApi, petApi, serve } from "./server.mjs";
 
 /** Svelte sources — components, and modules that use runes — through the compiler. */
 const svelte = {
@@ -58,6 +59,35 @@ test("svelte-query hooks follow state, wait for a missing id and stop with their
     const code = await new Promise((resolve) => child.on("close", resolve));
     assert.equal(code, 0, output);
     assert.match(output, /svelte ok/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("svelte-query hooks take header arguments, also for an infinite list", async () => {
+  const dir = await generateTo("svelte-edges", {
+    library: "svelte-query",
+    infinite: true,
+    input: EDGES_FIXTURE,
+  });
+  const entry = await bundle(dir, join(root, "test/probes/svelte-edges.js"), {
+    plugins: [svelte],
+    conditions: ["browser"],
+    mainFields: ["svelte", "browser", "module", "main"],
+  });
+  const server = await serve(edgesApi);
+  try {
+    const child = spawn(
+      process.execPath,
+      ["--import", join(root, "test/probes/dom.mjs"), entry, String(server.port)],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let output = "";
+    child.stdout.on("data", (chunk) => (output += chunk));
+    child.stderr.on("data", (chunk) => (output += chunk));
+    const code = await new Promise((resolve) => child.on("close", resolve));
+    assert.equal(code, 0, output);
+    assert.match(output, /svelte edges ok/);
   } finally {
     await server.close();
   }

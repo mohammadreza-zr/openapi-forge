@@ -24,22 +24,7 @@ Object.defineProperty(globalThis, "navigator", {
 
 import { compileCjs, generateTo, sleep } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
-import { petApi, serve } from "./server.mjs";
-
-/** The edges fixture's paged read: five strings, from `start`, `offset` at a time. */
-function pagesApi(request) {
-  const url = new URL(request.url, "http://x");
-  const start = Number(url.searchParams.get("start") ?? 0);
-  const size = Number(url.searchParams.get("offset") ?? 20);
-  return {
-    body: {
-      count: 5,
-      list: Array.from({ length: Math.max(0, Math.min(size, 5 - start)) }, (_, i) =>
-        String(start + i),
-      ),
-    },
-  };
-}
+import { pagesApi, petApi, serve } from "./server.mjs";
 
 describe("the React hooks", () => {
   let server;

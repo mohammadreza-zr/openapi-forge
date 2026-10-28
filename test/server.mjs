@@ -5,7 +5,8 @@ import { createServer } from "node:http";
 /**
  * @param reply (request) => { status?, body, type? } — may be async. `body` is
  * sent as JSON unless it is a string or bytes; `type` is its content type
- * (JSON by default). GET /asked lists "METHOD url" of what was seen.
+ * (JSON by default). GET /asked lists "METHOD url" of what was seen, and
+ * GET /seen the same with headers and body, for a probe in another process.
  */
 export async function serve(reply) {
   const seen = [];
@@ -17,6 +18,10 @@ export async function serve(reply) {
       return response.end(
         JSON.stringify(seen.map((item) => `${item.method} ${item.url}`)),
       );
+    }
+    if (request.url === "/seen") {
+      response.writeHead(200, { "content-type": "application/json" });
+      return response.end(JSON.stringify(seen));
     }
     const entry = {
       method: request.method,
@@ -78,3 +83,23 @@ export async function petApi(request) {
   }
   return ok({ id: url.pathname.split("/")[4], name: "pet" });
 }
+
+/** The edges fixture's paged read: five strings, from `start`, `offset` at a time. */
+export function pagesApi(request) {
+  const url = new URL(request.url, "http://x");
+  const start = Number(url.searchParams.get("start") ?? 0);
+  const size = Number(url.searchParams.get("offset") ?? 20);
+  return {
+    body: {
+      count: 5,
+      list: Array.from(
+        { length: Math.max(0, Math.min(size, 5 - start)) },
+        (_, index) => String(start + index),
+      ),
+    },
+  };
+}
+
+/** The edges fixture's API: the paged read, and `{}` for everything else. */
+export const edgesApi = (request) =>
+  request.url.startsWith("/api/v1/pages") ? pagesApi(request) : { body: {} };

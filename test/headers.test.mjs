@@ -10,7 +10,7 @@ globalThis.window = globalThis;
 
 import { compileCjs, generateTo, until } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
-import { serve } from "./server.mjs";
+import { edgesApi, serve } from "./server.mjs";
 
 describe("header parameters in the vue-query hooks", () => {
   let server;
@@ -22,13 +22,14 @@ describe("header parameters in the vue-query hooks", () => {
   before(async () => {
     const dir = await generateTo("vue-headers", {
       library: "vue-query",
+      infinite: true,
       input: EDGES_FIXTURE,
     });
     const js = compileCjs(dir);
     const require = createRequire(join(dir, "load.cjs"));
     vue = require("vue");
     const { QueryClient, VueQueryPlugin } = require("@tanstack/vue-query");
-    server = await serve(() => ({ body: {} }));
+    server = await serve(edgesApi);
     require(join(js, "client.js")).configureClient({ baseUrl: server.base });
     app = vue.createApp({});
     client = new QueryClient({
@@ -53,5 +54,22 @@ describe("header parameters in the vue-query hooks", () => {
       "a request for tenant b",
     );
     assert.equal(server.seen.length, 2);
+  });
+
+  test("an infinite list sends its header with every page", async () => {
+    const headers = vue.ref({ "X-Tenant-Id": "t9" });
+    const query = app.runWithContext(() =>
+      edges.useListPagesInfiniteQuery({}, headers, { pageSize: 2 }),
+    );
+    await until(() => query.data.value?.pages.length === 1, "the first page");
+    await query.fetchNextPage();
+    await until(() => query.data.value?.pages.length === 2, "the second page");
+    assert.deepEqual(
+      query.data.value.pages.map((page) => page.list.join()),
+      ["0,1", "2,3"],
+    );
+    const asked = server.seen.filter((item) => item.url.startsWith("/api/v1/pages"));
+    assert.ok(asked.length >= 2);
+    assert.ok(asked.every((item) => item.headers["x-tenant-id"] === "t9"));
   });
 });

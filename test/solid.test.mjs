@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { compileCjs, generateTo, root } from "./harness.mjs";
-import { petApi, serve } from "./server.mjs";
+import { EDGES_FIXTURE } from "./helpers.mjs";
+import { edgesApi, petApi, serve } from "./server.mjs";
 
 test("solid-query hooks follow a signal, wait for a missing id and stop with their owner", async () => {
   const dir = await generateTo("solid", { library: "solid-query" });
@@ -30,6 +31,36 @@ test("solid-query hooks follow a signal, wait for a missing id and stop with the
     const code = await new Promise((resolve) => child.on("close", resolve));
     assert.equal(code, 0, output);
     assert.match(output, /solid ok/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("solid-query hooks take header arguments, also for an infinite list", async () => {
+  const dir = await generateTo("solid-edges", {
+    library: "solid-query",
+    infinite: true,
+    input: EDGES_FIXTURE,
+  });
+  compileCjs(dir);
+  const server = await serve(edgesApi);
+  try {
+    const child = spawn(
+      process.execPath,
+      [
+        "--conditions=browser",
+        join(root, "test/probes/solid-edges.cjs"),
+        dir,
+        String(server.port),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let output = "";
+    child.stdout.on("data", (chunk) => (output += chunk));
+    child.stderr.on("data", (chunk) => (output += chunk));
+    const code = await new Promise((resolve) => child.on("close", resolve));
+    assert.equal(code, 0, output);
+    assert.match(output, /solid edges ok/);
   } finally {
     await server.close();
   }
