@@ -296,7 +296,7 @@ const { files } = emit(doc, resolvedOptions, "swagger.json");          // name �
 
 ## Notes
 
-- Names come from `operationId` (or `method + path`), collisions get the method appended.
+- Names come from `operationId` (or `method + path`). A name already taken — the same `operationId` in two services — gets the method appended (`getUser` → `getUserGet`), and a number only if that is taken too (`getUserGet2`).
 - A `DELETE` that takes a body sends it with `fetch`, axios and Angular's `HttpClient`; `@mrzr/api-client`'s `delete` takes no body, so under the default `http` that operation is left out and listed under "things to look at" (pick another `http` to send it). A `GET` that declares a body cannot be sent, so the body is left out with a warning.
 - A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows.
 - Prettier is optional: the project's own is used when installed (with its config); otherwise output is raw.

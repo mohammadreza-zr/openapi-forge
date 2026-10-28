@@ -134,3 +134,33 @@ test("Go-style schema names become identifiers and every $ref follows", () => {
   assert.match(files.get("models.ts"), /export type HandlerPet = \{/);
   assert.match(files.get("pets.ts"), /apiPost<HandlerPet>/);
 });
+
+test("an operationId used twice gets the method appended, and a number only if that is taken too", () => {
+  const operation = (operationId) => ({
+    operationId,
+    responses: { 200: { description: "ok" } },
+  });
+  const doc = {
+    openapi: "3.0.3",
+    info: { title: "t", version: "1" },
+    paths: {
+      "/a": { get: operation("getThing"), post: operation("save") },
+      "/b": { get: operation("getThing"), put: operation("save") },
+      "/c": { get: operation("getThing") },
+      "/d": { get: operation("getThingGet") },
+    },
+  };
+  const { files } = emit(doc, options({ target: "requests" }), "t.yaml");
+  const names = [
+    ...[...files.values()].join("\n").matchAll(/^export function (\w+)\(/gm),
+  ].map((match) => match[1]);
+  // The second `getThing` took `getThingGet`, so the third is `getThingGet2` and an operation really named `getThingGet` moves on.
+  assert.deepEqual(names.sort(), [
+    "getThing",
+    "getThingGet",
+    "getThingGet2",
+    "getThingGetGet",
+    "save",
+    "savePut",
+  ]);
+});

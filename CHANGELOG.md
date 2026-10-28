@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A repeated `operationId` is named with the method appended (`getUserGet`), as the README says; before, the first repeat was already numbered (`getUserGet2`). A number is added only when the name with the method is taken too.
+
 ## 0.2.0
 
 - **The default `http` is `"api-client"`** (it was going to be `fetch`): a project that does not name one now gets a client over [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) and needs that package. `http: "fetch"` is still there and needs nothing; the three runtime files are written once, so a layer already generated keeps its `client.ts`. A `DELETE` operation with a body is left out under the default (see below), where `fetch` sends it.

@@ -370,9 +370,10 @@ export function emit(
           operation.operationId ?? `${method} ${path}`,
           `${method}Path${operations.length}`,
         );
+        // A name already in use gets the method (`getUserGet`), then a number.
         let name = base;
-        for (let i = 2; taken.has(name); i += 1) {
-          name = `${base}${upperFirst(method)}${i}`;
+        for (let i = 1; taken.has(name); i += 1) {
+          name = `${base}${upperFirst(method)}${i > 1 ? i : ""}`;
         }
         taken.add(name);
 
