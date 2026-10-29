@@ -1,6 +1,6 @@
 {
   "name": "@mrzr/openapi-forge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Generate a typed TypeScript API layer — models, request functions, query keys and hooks for React, Vue, Svelte, Solid or Angular Query, or SWR — from OpenAPI / Swagger documents.",
   "keywords": [
     "openapi",
