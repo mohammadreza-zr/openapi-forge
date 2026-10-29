@@ -91,3 +91,23 @@ test("a folder of documents is merged as services", async () => {
   assert.match(await readFile(join(dir, "api", "ping.ts"), "utf8"), /apiGet/);
   assert.match(await readFile(join(dir, "api", "services.ts"), "utf8"), /"other"/);
 });
+
+test("the module of a tag the document dropped is removed, and --check names it", async () => {
+  const dir = await project();
+  const args = ["--input", "openapi.yaml", "--out", "api", "--raw"];
+  forge(dir, ...args);
+  const { stat } = await import("node:fs/promises");
+  const doc = (await readFile(join(dir, "openapi.yaml"), "utf8")).replace(/tags:\s*\[Owners\]/g, "tags: [Pets]");
+  assert.equal(await stat(join(dir, "api", "owners.ts")).then(() => true, () => false), true);
+  await writeFile(join(dir, "openapi.yaml"), doc);
+  await writeFile(join(dir, "api", "mine.ts"), "// written by a person\n");
+
+  const check = forge(dir, ...args, "--check");
+  assert.equal(check.status, 1);
+  assert.match(check.stderr, /owners\.ts/);
+
+  assert.equal(forge(dir, ...args).status, 0);
+  assert.equal(await stat(join(dir, "api", "owners.ts")).then(() => true, () => false), false);
+  assert.equal(await readFile(join(dir, "api", "mine.ts"), "utf8"), "// written by a person\n");
+  assert.equal(await stat(join(dir, "api", "client.ts")).then(() => true, () => false), true);
+});

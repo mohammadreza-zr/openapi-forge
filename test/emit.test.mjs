@@ -164,3 +164,53 @@ test("an operationId used twice gets the method appended, and a number only if t
     "savePut",
   ]);
 });
+
+test("an operationId or path argument that is a reserved word still gives valid code", () => {
+  const operation = (operationId, parameters = []) => ({
+    operationId,
+    parameters,
+    responses: { 200: { description: "ok" } },
+  });
+  const doc = {
+    openapi: "3.0.3",
+    info: { title: "t", version: "1" },
+    paths: {
+      "/a": { get: operation("delete") },
+      "/b": { get: operation("2fa") },
+      "/c/{in}": {
+        get: operation("getC", [
+          { name: "in", in: "path", required: true, schema: { type: "string" } },
+        ]),
+      },
+    },
+  };
+  const { files } = emit(doc, options({ target: "requests" }), "t.yaml");
+  const source = [...files.values()].join("\n");
+  assert.doesNotMatch(source, /function (delete|2fa)\(/);
+  assert.doesNotMatch(source, /\(in:/);
+  assert.match(source, /function getC\(getCPath: string/);
+});
+
+test("a schema named with a leading digit gets a valid type and validator name", () => {
+  const doc = {
+    openapi: "3.0.3",
+    info: { title: "t", version: "1" },
+    paths: {
+      "/a": {
+        get: {
+          operationId: "getA",
+          responses: {
+            200: {
+              description: "ok",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/2FA" } } },
+            },
+          },
+        },
+      },
+    },
+    components: { schemas: { "2FA": { type: "object", properties: { code: { type: "string" } } } } },
+  };
+  const { files } = emit(doc, options({ zod: true }), "t.yaml");
+  assert.match(files.get("models.ts"), /export type _2FA = \{/);
+  assert.match(files.get("schemas.ts"), /export const _2FASchema: z\.ZodType<_2FA>/);
+});

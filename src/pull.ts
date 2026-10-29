@@ -1,11 +1,11 @@
 // Replaces the documents in the specs folder with the ones the backend
 // services publish. A document is written exactly as it was served — never
 // reformatted — and only when it is a readable OpenAPI document.
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 
-import { fetchText } from "./load/source.js";
+import { fetchText, parseDocument } from "./load/source.js";
 import { diffDocuments, renderReport } from "./diff.js";
 import { LIBRARIES } from "./runtime/libraries/index.js";
 import type { ForgeOptions } from "./types.js";
@@ -68,15 +68,25 @@ export async function pull(
   await mkdir(dir, { recursive: true });
   for (const { name, text, ext } of pulled) {
     const file = join(dir, `${name}.${ext}`);
-    const current = await readFile(file, "utf8").catch(() => null);
+    let current = await readFile(file, "utf8").catch(() => null);
+    // A service that moved from JSON to YAML (or back) must not leave its old
+    // document behind, or the folder would hold two copies of one service.
+    for (const other of ["json", "yaml", "yml"]) {
+      if (other === ext) continue;
+      const old = join(dir, `${name}.${other}`);
+      current ??= await readFile(old, "utf8").catch(() => null);
+      await rm(old, { force: true });
+    }
     if (current !== text) await writeFile(file, text, "utf8");
     console.log(
       `${TAG}: ${name} ${current === text ? "unchanged" : current === null ? "added" : "updated"}`,
     );
     if (current !== null && current !== text) {
+      // Both go through the same upgrade a run reads them with, so a Swagger
+      // 2.0 document is compared in the shape its code is generated from.
       const findings = diffDocuments(
-        parseYaml(current),
-        parseYaml(text),
+        parseDocument(current, name),
+        parseDocument(text, name),
         LIBRARIES[options.library].prefix,
       );
       if (findings.length)

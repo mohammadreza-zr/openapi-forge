@@ -47,7 +47,7 @@ Options
   --fail-on <breaking|risky|safe> with \`diff\`: exit 1 at this severity or worse
   --zod                  also write schemas.ts (Zod validators)
   --infinite             add infinite-list hooks to paged reads
-  --watch                rebuild when the input or config changes
+  --watch                rebuild when a local input document changes (a URL is polled)
   --interval <seconds>   with --watch on a URL input: how often to look (default 30)
   --check                exit 1 when the committed output is stale
   --raw                  skip prettier
@@ -289,13 +289,16 @@ async function main() {
       )
       .filter((item) => typeof item === "string");
     const remote = inputs.some((item) => /^https?:\/\//.test(item));
+    const interval = Number(values.interval ?? 30);
+    if (!(interval > 0))
+      throw new Error("openapi-forge: --interval must be a number of seconds above 0.");
     watchRun(
       () => generate(options, { cwd, forceRuntime: false }).then(() => {}),
       {
         paths: inputs
           .filter((item) => !/^https?:\/\//.test(item))
           .map((item) => resolve(cwd, item)),
-        poll: remote ? Number(values.interval ?? 30) : 0,
+        poll: remote ? interval : 0,
       },
     );
     console.log("openapi-forge: watching — press Ctrl+C to stop.");

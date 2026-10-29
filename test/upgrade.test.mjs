@@ -204,3 +204,52 @@ test("prefixItems is a tuple, in the model and in the validator", () => {
   );
   assert.deepEqual(problems, []);
 });
+
+test("a Swagger 2.0 query list is comma separated unless collectionFormat says otherwise", () => {
+  const doc = upgradeDocument({
+    swagger: "2.0",
+    info: { title: "t", version: "1" },
+    paths: {
+      "/a": {
+        get: {
+          operationId: "list",
+          parameters: [
+            { name: "ids", in: "query", type: "array", items: { type: "integer" } },
+            { name: "tags", in: "query", type: "array", items: { type: "string" }, collectionFormat: "pipes" },
+            { name: "words", in: "query", type: "array", items: { type: "string" }, collectionFormat: "ssv" },
+            { name: "many", in: "query", type: "array", items: { type: "string" }, collectionFormat: "multi" },
+            { name: "one", in: "query", type: "string" },
+          ],
+          responses: { 200: { description: "ok" } },
+        },
+      },
+    },
+  });
+  const [ids, tags, words, many, one] = doc.paths["/a"].get.parameters;
+  assert.deepEqual([ids.style, ids.explode], ["form", false]);
+  assert.deepEqual([tags.style, tags.explode], ["pipeDelimited", false]);
+  assert.deepEqual([words.style, words.explode], ["spaceDelimited", false]);
+  assert.deepEqual([many.style, many.explode], ["form", true]);
+  assert.equal(one.style, undefined);
+});
+
+test("a Swagger 2.0 list the client would repeat is reported, not sent differently without a word", () => {
+  const { problems } = emit(
+    {
+      swagger: "2.0",
+      info: { title: "t", version: "1" },
+      paths: {
+        "/a": {
+          get: {
+            operationId: "list",
+            parameters: [{ name: "ids", in: "query", type: "array", items: { type: "integer" } }],
+            responses: { 200: { description: "ok" } },
+          },
+        },
+      },
+    },
+    options({ target: "requests" }),
+    "t.yaml",
+  );
+  assert.match(problems.map((item) => item.where + item.message).join("\n"), /ids.*repeats the key/s);
+});

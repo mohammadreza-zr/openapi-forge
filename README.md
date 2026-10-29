@@ -1,15 +1,73 @@
 # @mrzr/openapi-forge
 
-Generate a typed TypeScript API layer from OpenAPI / Swagger documents:
+Generate a typed TypeScript API layer — models, request functions, query keys and data-fetching hooks — from OpenAPI / Swagger documents.
 
-- **models** — one `type` per schema (inline objects named, `allOf` / `oneOf` / `nullable`, enums, `Blob` for uploads)
-- **request functions** — one per operation, with typed path / query / body arguments
-- **route + query-key factories** — each URL is written once; keys point at it
-- **hooks for the library you use** — React, Vue, Svelte, Solid or Angular Query, or SWR: a query hook per read, a mutation hook per write (optional)
-- **several services, one layer** — merge many documents; conflicts are decided once and committed
-- **a runtime of its own, or yours** — a small client over [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (the default), `fetch`, axios or Angular `HttpClient` is written for you, or the code imports your transport
+```bash
+npm i -D @mrzr/openapi-forge
+npx openapi-forge --input swagger.json --out src/api/generated
+```
 
-Output is deterministic and prettier-formatted, so `--check` can fail CI when the committed layer is stale.
+The output is plain, readable TypeScript that is formatted with your own Prettier and is **deterministic**, so `--check` can fail CI when the committed layer is stale.
+
+## Contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [What is generated](#what-is-generated)
+- [Hook libraries](#hook-libraries)
+- [HTTP clients](#http-clients)
+- [Your own transport](#your-own-transport)
+- [What goes over the wire](#what-goes-over-the-wire)
+- [Answers, envelopes and errors](#answers-envelopes-and-errors)
+- [Input](#input)
+- [Several services](#several-services)
+- [Types and naming](#types-and-naming)
+- [Opt-in extras](#opt-in-extras)
+- [Commands and flags](#commands-and-flags)
+- [Config reference](#config-reference)
+- [Keeping up with a changing spec](#keeping-up-with-a-changing-spec)
+- [Use in CI](#use-in-ci)
+- [Programmatic use](#programmatic-use)
+- [How it is tested](#how-it-is-tested)
+- [Coming from Orval](#coming-from-orval)
+
+## Features
+
+**Generated code**
+
+- **Models** — one `type` per schema: inline objects get names, `allOf` / `oneOf` / `anyOf`, `nullable`, enums, tuples (`prefixItems`), records (`additionalProperties`), `Blob` for uploads, circular references.
+- **Request functions** — one per operation, with typed path, query, header and body arguments, a `config` argument for `signal`, `baseUrl` and the like, and a JSDoc block (summary, description, `METHOD /route`, `@deprecated`).
+- **Routes written once** — a `<tag>Endpoints` map holds every URL; the request functions and the query keys both read it.
+- **Query-key factories** — `<tag>Keys` with `all`, `lists()`, `details()` and one key per read, so invalidating "everything of this tag" is one line.
+- **Hooks** for **React Query, Vue Query, Svelte Query, Solid Query, Angular Query or SWR**: a query hook per read, a mutation hook per write (or only plain request functions with `target: "requests"`).
+- **Reactive arguments** — in Vue, Svelte, Solid and Angular a hook argument may be a ref, a getter or a signal, and the query follows it.
+- **Safe detail reads** — a query whose path id is still `undefined` waits instead of asking for `/pets/undefined`.
+- **Zod validators** (`zod: true`) — `schemas.ts`, one validator per model, typed `z.ZodType<Model>` so the two cannot drift apart.
+- **Infinite-list hooks** (`infinite: true`) for paged reads.
+- **Shared types** — query and variable types with the same shape are written once (aliased, or `Omit<…> & { … }` when close); so are identical models with related names.
+
+**Transport**
+
+- **Four built-in HTTP clients** — [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (default), `fetch`, axios and Angular's `HttpClient` (interceptors keep working).
+- **Or your own** — `client: "custom"` imports your transport; every name and module path is configurable.
+- **Faithful encoding** — header parameters, repeated / bracketed query keys, path lists and objects, JSON, `multipart/form-data`, `application/x-www-form-urlencoded`, text and binary bodies, bodies on `DELETE`, answers read by `Content-Type` (JSON, text or `Blob`).
+- **Envelope handling** — `{ result, code, message, data }` answers are unwrapped per operation, `{ count, list }` becomes `ApiListData<T>`, failures throw an `ApiResponseError` with `status`, `code` and `body`.
+- **Cancellation** — queries, mutations and infinite lists pass an `AbortSignal` to the request (SWR cannot cancel, see below); an aborted request rejects.
+
+**Input**
+
+- Swagger 2.0, OpenAPI 3.0 and 3.1, as JSON or YAML, from a file, a **folder of files** or a **URL**.
+- Request headers for protected URLs; `--insecure` and `--ca` for private / self-signed certificates.
+- **Several backend services in one layer** — merged, with conflicts decided once and committed to `openapi-forge.decisions.json`; per-service base URLs.
+- An incomplete document never breaks the output: gaps are typed `unknown` and **listed with the operation and the part** to fix.
+
+**Workflow**
+
+- `generate`, `pull`, `diff`, `doctor`, `init` commands; `--watch`; `--check`.
+- **Change reports** — what a new spec breaks, in terms of your code (operation, hook, schema, property): *breaking / risky / safe*, as text, Markdown or JSON, with `--fail-on` for CI.
+- **Hooks into naming** — rename operations, query parameters and files, or drop an operation, with the `transform` option.
+- **Tag filters**, an `apiPrefix` stripped from every route, a custom banner (`generatorName`).
+- Strict TypeScript, ships its own `.d.ts`, Node ≥ 20, one runtime dependency (`yaml`).
 
 ## Quick start
 
@@ -21,7 +79,8 @@ npx openapi-forge --input swagger.json --out src/api/generated --api-prefix /api
 
 With the default `client: "builtin"` three small files are written **once** next to the layer
 (`client.ts`, `hooks.ts`, `types.ts`). They are yours to edit and are never overwritten
-(`--force-runtime` resets them). The hooks need the package of the library they wrap — `@tanstack/react-query` v5 by default, see [Clients](#clients).
+(`--force-runtime` resets them). The hooks need the package of the library they wrap —
+`@tanstack/react-query` v5 by default, see [Hook libraries](#hook-libraries).
 
 ```ts
 import { createClient } from "@mrzr/api-client";
@@ -36,11 +95,54 @@ const create = useCreatePetMutation();
 create.mutate({ body: { name: "Tom" } });
 ```
 
-Without `@mrzr/api-client`, pick another client (`http: "fetch"` needs nothing installed) and configure it with `configureClient({ baseUrl, headers: () => ({ Authorization: … }) })`.
+Without `@mrzr/api-client`, pick another client (`http: "fetch"` needs nothing installed) and configure it with
+`configureClient({ baseUrl, headers: () => ({ Authorization: … }) })`.
 
-## Clients
+## What is generated
 
-Two independent choices. `library` is what the hooks wrap; `http` is what the built-in runtime sends requests with.
+```
+src/api/generated/
+├── models.ts      every schema as a type
+├── pets.ts        one module per tag: endpoints, keys, types, request functions, hooks
+├── owners.ts
+├── schemas.ts     Zod validators                  (zod: true)
+├── services.ts    API_SERVICE_BASE_URLS           (per-service base URLs)
+├── index.ts       re-exports everything
+├── client.ts      ┐
+├── hooks.ts       ├ the built-in runtime, written once, yours to edit
+└── types.ts       ┘
+```
+
+A module (trimmed) looks like this:
+
+```ts
+export const petsEndpoints = { listPets: "/pets", getPet: "/pets/{pet_id}" } as const;
+
+export const petsKeys = {
+  all: ["Pets"] as const,
+  lists: () => [...petsKeys.all, "list"] as const,
+  details: () => [...petsKeys.all, "detail"] as const,
+  listPets: (params: ListPetsQuery) => [...petsKeys.lists(), petsEndpoints.listPets, params] as const,
+  getPet: (petId: string) => [...petsKeys.details(), petsEndpoints.getPet, petId] as const,
+} as const;
+
+export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string[] };
+
+/** List the pets — `GET /pets` */
+export function listPets(query: ListPetsQuery = {}, config?: GeneratedRequestConfig<ApiListData<Pet>>) { … }
+
+export function useListPetsQuery(query: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
+export function useGetPetQuery(petId: string | undefined, options?: ApiQueryOptions<…>) { … }
+export function useCreatePetMutation(options?: ApiMutationOptions<Pet, CreatePetVariables>) { … }
+```
+
+- A write takes **one variables object** (`{ petId, query, headers, body }` — only the parts it has), named `<Operation>Variables`.
+- Query and header parameters get `<Operation>Query` / `<Operation>Headers` types.
+- An operation with no tag goes to the `default` module.
+
+## Hook libraries
+
+Two independent choices: `library` is what the hooks wrap; `http` is what the built-in runtime sends requests with.
 
 ```js
 export default defineConfig({
@@ -63,11 +165,19 @@ In the four reactive libraries an argument is read where the request is made, no
 
 ```ts
 const id = ref("1");
-const pet = useGetPetQuery(id);          // Vue: refetches when `id.value` changes
+const pet = useGetPetQuery(id);            // Vue: refetches when `id.value` changes
 const pet = createGetPetQuery(() => id()); // Solid / Svelte / Angular: a getter
 ```
 
 A path id that is still `undefined` makes the query wait instead of asking for `/pets/undefined`. Mutations take their variables when `mutate` is called, so they are the same in every library.
+
+Notes that follow from what each library offers:
+
+- **SWR** cannot cancel a request, so the `signal` a fetcher gets never fires; an infinite list asks for page `n` at `n * pageSize`.
+- **Solid**: the hook options leave out `initialData` — `createQuery` has one overload for options that set it and one for options that do not, and options that may do either match neither.
+- **Angular**: `inject…` functions need an injection context — a constructor, a field initialiser, a service, `runInInjectionContext`.
+
+## HTTP clients
 
 | `http` | sends with | needs |
 | --- | --- | --- |
@@ -76,73 +186,14 @@ A path id that is still `undefined` makes the query wait instead of asking for `
 | `axios` | an axios instance, `configureClient({ instance })` | `axios` |
 | `angular` | Angular's `HttpClient`, so its interceptors apply; `configureClient({ instance: inject(HttpClient) })` at start-up | `@angular/common`, `rxjs` |
 
-Coming from Orval, its `client` values map like this: `react-query`, `vue-query`, `svelte-query`, `solid-query`, `angular-query` and `swr` are the `library` values above; `fetch`, `axios` and `angular` are `http` values (with `target: "requests"` for plain functions); `zod` is `zod: true`.
+- With `axios`, `angular` and `api-client` the instance is `configureClient({ instance })`; interceptors, plugins, tokens and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so all four behave alike.
+- An aborted request rejects in every client, but with the client's own error: `AbortError` for `fetch`, `CanceledError` for axios (`axios.isCancel`).
+- With the axios, Angular and api-client clients the answer reaches interceptors as bytes (an `ArrayBuffer`), because it is read by content type afterwards, the same way for every client.
+- `configureClient({ baseUrl, headers })` — a default base URL and a function that returns headers (sync or async), for every client. A single call may override `baseUrl` through its `config` argument.
 
-Left out on purpose: `hono` and `mcp` generate server handlers and tools, not a client; MSW / Faker mocks do not belong in a data layer (and a project that forbids mocks cannot use them); Suspense variants would double every hook. The `angular` client is promise-based over `HttpClient`, not the Observable-returning services Orval writes — with `angular-query` on top it covers an Angular application, and the interceptors keep working.
+## Your own transport
 
-Notes that follow from what each library offers:
-
-- **SWR** cannot cancel a request, so the `signal` a fetcher gets never fires; an infinite list asks for page `n` at `n * pageSize`.
-- **Solid**: the hook options leave out `initialData` — `createQuery` has one overload for options that set it and one for options that do not, and options that may do either match neither.
-- **Angular**: `inject…` functions need an injection context — a constructor, a field initialiser, a service, `runInInjectionContext`.
-- **axios**, **angular** and **api-client**: the instance is `configureClient({ instance })`; interceptors, plugins, tokens and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so all four behave alike. An aborted request rejects in every client, but with the client's own error: `AbortError` for `fetch`, `CanceledError` for axios (`axios.isCancel`).
-
-## Commands
-
-| command | does |
-| --- | --- |
-| `openapi-forge [generate]` | write the layer |
-| `openapi-forge pull` | fetch the documents in `sources` into `specsDir`, then generate |
-| `openapi-forge diff <old> <new>` | report breaking / risky / safe changes between two documents (`--format`, `--fail-on`) |
-| `openapi-forge doctor` | check the config, input, output, packages and runtime modules |
-| `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
-
-Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
-`--target hooks|requests`, `--library <name>`, `--http fetch|axios|angular|api-client`, `--client builtin|custom`, `--headers "K: v;K2: v"`, `--insecure`,
-`--ca <pem>`, `--check`, `--raw`, `--force-runtime`, `--no-pull`, `--verbose`, `--watch`, `--interval <s>`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`.
-Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`,
-`OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
-The command line wins over the config file, which wins over the defaults.
-
-## Config
-
-`openapi-forge.config.{mjs,js,cjs,json}` — all keys optional:
-
-```js
-import { defineConfig } from "@mrzr/openapi-forge";
-
-export default defineConfig({
-  input: "openapi.json",          // file | URL | folder of documents | { service: fileOrUrl }
-  out: "src/api/generated",
-  apiPrefix: "/api/v1",           // stripped from every route
-  client: "builtin",              // "builtin" | "custom"
-  target: "hooks",                // "hooks" | "requests"
-  library: "react-query",         // "vue-query" | "svelte-query" | "solid-query" | "angular-query" | "swr"
-  http: "api-client",             // "fetch" | "axios" | "angular" — for the built-in runtime
-  tags: { include: [], exclude: [] },
-  headers: { Authorization: "Bearer …" },   // for a URL input
-  tls: { insecure: false, ca: "internal-ca.pem" },
-  format: "prettier",             // or false
-  sources: { users: "https://host/users/openapi.yaml" },  // for `pull`
-  specsDir: "openapi-specs",
-  decisionsFile: "openapi-forge.decisions.json",
-  generatorName: "openapi-forge", // the banner of every file
-
-  runtime: { /* see below */ },
-
-  transform: {
-    queryParam: (name, { service, operation, path }) => name,
-    operationName: (operation) => undefined,   // return a new name to rename
-    fileName: (tag) => tag,                    // module file per tag
-    operation: (operation) => operation,       // change one, or return null to drop it
-  },
-});
-```
-
-### Using your own transport (`client: "custom"`)
-
-Everything the emitted code imports and calls is configurable. Defaults are the built-in runtime;
-override what differs:
+`client: "custom"` writes no runtime; the generated code imports yours. Everything it imports and calls is configurable — defaults are the built-in runtime, override what differs:
 
 ```js
 export default defineConfig({
@@ -159,34 +210,15 @@ export default defineConfig({
 });
 ```
 
-Module paths are written as-is into the generated files, so paths relative to the output folder
-must be relative to it. `library` still decides how the generated hooks are named (`use…`, `create…`,
-`inject…`) and whether they read their arguments through `toValue` / `MaybeGetter` (the reactive
-libraries) — a custom runtime has to export those two names then, and its wrappers are named
-`<prefix>ApiQuery` by default.
+Module paths are written as-is into the generated files, so paths relative to the output folder must be relative to it. `library` still decides how the generated hooks are named (`use…`, `create…`, `inject…`) and whether they read their arguments through `toValue` / `MaybeGetter` (the reactive libraries) — a custom runtime has to export those two names then, and its wrappers are named `<prefix>ApiQuery` by default.
 
-The transport contract is `apiGet<T>(route, config)`, `apiPost<T>(route, body, config)` (also put /
-patch), `apiDelete<T>(route, config)`, where `config` carries `signal`, `params` (query),
-`addTemplateToUrl` (`{pet_id: "1"}` for `/pets/{pet_id}`), `isFormData` and `baseUrl`. Each resolves
-to the unwrapped payload. `headers` (declared header parameters, and the `Content-Type` of a body that
-is not JSON) and `isEnvelope` are written only for the built-in runtime, and so is `body`, the key a `DELETE`'s body
-rides in (`apiDelete(route, config)` takes none of its own); a custom transport gets them when
-`requestKeys.headers` / `requestKeys.envelope` / `requestKeys.body` name a key, and until then a header
-parameter is reported instead of being sent and a `DELETE` with a body is skipped with a warning.
+The transport contract is `apiGet<T>(route, config)`, `apiPost<T>(route, body, config)` (also put / patch), `apiDelete<T>(route, config)`, where `config` carries `signal`, `params` (query), `addTemplateToUrl` (`{pet_id: "1"}` for `/pets/{pet_id}`), `isFormData` and `baseUrl`. Each resolves to the unwrapped payload.
 
-### The envelope
+`headers` (declared header parameters, and the `Content-Type` of a body that is not JSON), `isEnvelope` and `body` (the key a `DELETE`'s body rides in) are written only for the built-in runtime. A custom transport gets them when `requestKeys.headers` / `requestKeys.envelope` / `requestKeys.body` name a key; until then a header parameter is reported instead of being sent and a `DELETE` with a body is skipped with a warning.
 
-If an answer is `{ result, code, message, data }`, the generated types and calls speak only of
-`data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`. The decision is
-made per operation, from its response schema (it has `result` and `data`), and the request function says
-so with `isEnvelope: true` — the built-in client unwraps only those, so a payload that merely has a
-`result` field is returned as it is. A `{ count, list }` payload becomes `ApiListData<T>` only when
-the document marks both fields `required`; otherwise it keeps its own type, with optional fields, because
-`ApiListData` promises both are there. An API that always sends both can say so with
-`runtime: { list: { assumeRequired: true } }`. Set `runtime.envelope: false` / `runtime.list: false` for an API
-with neither.
+`openapi-forge doctor` checks that the modules the config names can be found.
 
-### What goes over the wire
+## What goes over the wire
 
 The built-in client writes what the document asks for, and reports (never silently changes) what it cannot:
 
@@ -198,41 +230,48 @@ The built-in client writes what the document asks for, and reports (never silent
 | a query object | `a[b]=1` (deepObject); another style is reported |
 | a path list or object | `a,b` / `name,value,name,value` |
 | a body on `DELETE` | sent, from `config.body` — except by `api-client`, whose `delete` takes none: the operation is left out and listed |
+| a body on `GET` | cannot be sent: left out with a warning |
 | `multipart/form-data` | one part per list item, a JSON part per object, a file as it is |
 | `application/x-www-form-urlencoded` | a form; a list repeats its key |
 | `text/plain`, `application/octet-stream`, other non-JSON bodies | sent as they are, with that `Content-Type` |
 | an answer | read by its `Content-Type`: JSON parsed, `text/*` as a string, anything else a `Blob`; an empty answer is `null` |
 
-With the axios, Angular and api-client clients the answer reaches interceptors as bytes (an `ArrayBuffer`), because it is read by content type afterwards, the same way for every client.
+`undefined`, `null` and `""` are left out of a query string. A header value that is not text (a number, a flag) is written with `String()`.
 
-## Input it understands
+A Swagger 2.0 query list is comma separated unless its `collectionFormat` says otherwise (`csv` is the default there), so such a list is **reported** — the client repeats the key — instead of being sent differently without a word. `collectionFormat: multi` is the repeated form and needs no report.
 
-Swagger 2.0, OpenAPI 3.0 and 3.1, as JSON or YAML, from a file, a folder of files (one per service) or a URL. A 2.0 document is converted to 3.0 first (`definitions`, `in: body` / `formData`, `consumes` / `produces`, `x-nullable`); the 3.1 spellings (`type: [x, "null"]`, `const`) are folded into their 3.0 equivalents. Local `$ref`s that point outside `components` are inlined.
+## Answers, envelopes and errors
 
-What a document leaves out never breaks the output: that spot is typed `unknown`, and the run lists every one of them with the operation and the part (`response`, `request body`, `parameter x`, `schema Y`) so it can be fixed at the source.
+- **Envelope.** If an answer is `{ result, code, message, data }`, the generated types and calls speak only of `data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`. The decision is made **per operation**, from its response schema (it has `result` and `data`), and the request function says so with `isEnvelope: true` — the built-in client unwraps only those, so a payload that merely has a `result` field is returned as it is. `result: false` throws.
+- **Paged lists.** A `{ count, list }` payload becomes `ApiListData<T>` only when the document marks both fields `required`; otherwise it keeps its own type with optional fields, because `ApiListData` promises both are there. An API that always sends both can say so with `runtime: { list: { assumeRequired: true } }`.
+- Set `runtime.envelope: false` / `runtime.list: false` for an API with neither.
+- **Errors.** A non-2xx status or `result: false` throws `ApiResponseError` (exported from `types.ts`) with `status`, `code` and the parsed `body`.
 
-## Tested against real documents
+## Input
 
-`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 9 clients × 62 documents pass.
+- **Formats** — Swagger 2.0, OpenAPI 3.0 and 3.1, JSON or YAML. A 2.0 document is converted to 3.0 first (`definitions`, `in: body` / `formData`, `consumes` / `produces`, `x-nullable`, `collectionFormat`); the 3.1 spellings (`type: [x, "null"]`, `const`) are folded into their 3.0 equivalents. Local `$ref`s that point outside `components` are inlined.
+- **Where from** — a file, a folder of files (one per service) or a URL, or a map `{ service: fileOrUrl }`.
+- **Protected URLs** — `headers` (`--headers "Authorization: Bearer …"`, `OPENAPI_FORGE_HEADERS`).
+- **TLS** — `tls: { ca: "internal-ca.pem" }` (`--ca`) trusts a private CA **in addition to** the public ones; `tls: { insecure: true }` (`--insecure`) skips verification (local development only, never in CI). `NODE_EXTRA_CA_CERTS` works too, and a TLS failure names these options.
+- **Gaps** — what a document leaves out never breaks the output: that spot is typed `unknown`, and the run lists every one of them with the operation and the part (`response`, `request body`, `parameter x`, `schema Y`) so it can be fixed at the source. `--verbose` lists all of them.
 
-The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios, Angular `HttpClient` and `@mrzr/api-client` clients are called against a local HTTP server (query strings, path encoding, JSON, multipart and form bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort, bytes and text answers, a payload with a `result` field — and an interceptor, for Angular). Every hook library is executed (over `fetch`, axios and `@mrzr/api-client`, and Angular Query also over `HttpClient`) against the same kind of server: React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument (ref, signal, getter, state) moves the query, a missing id waits, a mutation sends its variables, and tearing down the owner aborts a mutation still in flight; a header argument (a ref, a getter, a signal, state) is sent and moves the query, and an infinite list pages and sends its header with every page. A custom transport is compiled with its own config type and called with only the keys it has.
+## Several services
 
-## How it compares
+Give `input` a folder of documents (named after their files) or `{ name: fileOrUrl }`. Operations and components found in one service are kept; ones found in several are merged when identical and need an **owner** when they differ.
 
-Measured, not claimed: the same 60 documents through Orval 8.45 (`--client react-query --mode tags-split`, default options) and type-checked the same way gave 56 clean outputs; the four failures were duplicate identifiers, a type mismatch on an optional body, and overload mismatches, and one document with only webhooks produced no files. Two honest caveats: this package was fixed against that corpus, Orval was not tuned for it, and Orval with a hand-written config may do better.
+- Run in a terminal once to answer the questions — the answers (`main` service, `owners`) are written to `decisionsFile` and commit with the code.
+- `--check` and CI never ask; they fail listing what is still undecided.
+- Operations carry `x-service`, and `services.ts` exports `API_SERVICE_BASE_URLS` for the per-service base URL (a literal map, or a function of yours with `runtime.services.fn`).
+- The run prints what was merged, which owner was chosen, which operations use a component owned by another service, and which saved choices no longer apply. `--verbose` lists the identical duplicates a merge folded together.
 
-| | openapi-forge | Orval |
-| --- | --- | --- |
-| Clients | `fetch`, axios, Angular `HttpClient` or `@mrzr/api-client`, or your own transport; React, Vue, Svelte, Solid and Angular Query, SWR | the same, plus Angular `HttpClient` services, Hono, MCP |
-| Mocks (MSW), Faker | no, by design | yes |
-| What changed in the new spec | `pull` and `diff` report breaking / risky / safe changes by hook name | not built in |
-| Several backend services in one layer | merged; conflicts decided once and committed | a separate output per spec |
-| Same-shaped query and variable types | written once, the rest alias or derive from it | repeated per operation |
-| Incomplete spec | valid output + a located report of every gap | not compared |
-| Stale-output check for CI | `--check` | via re-run and `git diff` |
-| Setup check | `doctor` | not built in |
+## Types and naming
 
-Orval is the broader tool — Angular `HttpClient` services, server targets, mocks, a large plugin ecosystem. This one stays with the data layer of an application: typed models, request functions and hooks you can read, review and keep in sync with several services.
+- Names come from `operationId` (or `method + path`). A name already taken — the same `operationId` in two services — gets the method appended (`getUser` → `getUserGet`), and a number only if that is taken too (`getUserGet2`).
+- An `operationId` that is not a usable function name (`delete`, `default`, `2fa`) falls back to a name built from the method and position; the same goes for a path argument called `in` or `delete`.
+- A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows. A schema named like a global type the generated code uses (`Date`, `Record`, …) gets a `Model` suffix; one that starts with a digit (`2FA`) gets a leading `_`.
+- Identical query / variable types (and models with related names) are written once; a query / variable type that is close to an earlier one is derived from it with `Omit<…> & { … }`.
+- Only the imports a module uses are written, so a project may compile with `noUnusedLocals`.
+- Property names that are not identifiers are quoted; doc comments from the document's `description`s are kept (and defused if they contain `*/`).
 
 ## Opt-in extras
 
@@ -246,16 +285,80 @@ export default defineConfig({
 });
 ```
 
-`zod` needs the `zod` package. `infinite` needs `useApiInfiniteQuery` and `ApiInfiniteQueryOptions` in a custom runtime (the built-in one writes them). It applies to reads that answer `ApiListData` (so `count` and `list` must be `required`, see [the envelope](#the-envelope)) and take no path id; header parameters are arguments of the hook, as in any other read.
+`zod` needs the `zod` package. `infinite` needs `useApiInfiniteQuery` and `ApiInfiniteQueryOptions` in a custom runtime (the built-in one writes them). It applies to reads that answer `ApiListData` (so `count` and `list` must be `required`, see [Answers](#answers-envelopes-and-errors)) and take no path id; header parameters are arguments of the hook, as in any other read.
 
-```bash
-openapi-forge --watch            # rebuild when a local document changes (a URL is polled: --interval 30)
-openapi-forge doctor             # config, input, output, installed packages, runtime modules
+`transform` changes names and operations for what a document gets wrong:
+
+```js
+transform: {
+  queryParam: (name, { service, operation, path }) => name,   // a query parameter's name on the wire
+  operationName: (operation) => undefined,                    // return a new name to rename
+  fileName: (tag) => tag,                                     // module file per tag
+  operation: (operation) => operation,                        // change one, or return null to drop it
+},
 ```
 
-## Know what a new spec breaks
+## Commands and flags
 
-`pull` prints what changed in every document it updates, in the terms of the code you consume — the operation, its generated hook, the schema and property:
+| command | does |
+| --- | --- |
+| `openapi-forge [generate]` | write the layer |
+| `openapi-forge pull` | fetch the documents in `sources` into `specsDir`, report what changed, then generate |
+| `openapi-forge diff <old> <new>` | report breaking / risky / safe changes between two documents (files or URLs) |
+| `openapi-forge doctor` | check the config, input, output, installed packages and runtime modules |
+| `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
+
+Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
+`--target hooks|requests`, `--library <name>`, `--http api-client|fetch|axios|angular`, `--client builtin|custom`,
+`--zod`, `--infinite`, `--headers "K: v;K2: v"`, `--insecure`, `--ca <pem>`, `--check`, `--raw`, `--force-runtime`,
+`--no-pull`, `--verbose`, `--watch`, `--interval <s>`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`,
+`-h`, `-v`.
+
+Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`, `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
+The command line wins over the config file, which wins over the defaults.
+
+- `--watch` rebuilds when a local input document changes; a URL input is polled (`--interval 30`).
+- `--check` writes nothing and exits 1 when the committed output differs from what a run would write, or when a generated file is left over.
+- `--raw` skips Prettier.
+- A run removes the module of a tag the document no longer has — only files that still carry the generated banner, never your own files and never the runtime.
+
+## Config reference
+
+`openapi-forge.config.{mjs,js,cjs,json}` — all keys optional:
+
+```js
+import { defineConfig } from "@mrzr/openapi-forge";
+
+export default defineConfig({
+  input: "openapi.json",          // file | URL | folder of documents | { service: fileOrUrl }
+  out: "src/api/generated",
+  apiPrefix: "/api/v1",           // stripped from every route
+  client: "builtin",              // "builtin" | "custom"
+  target: "hooks",                // "hooks" | "requests"
+  library: "react-query",         // "vue-query" | "svelte-query" | "solid-query" | "angular-query" | "swr"
+  http: "api-client",             // "fetch" | "axios" | "angular" — for the built-in runtime
+  tags: { include: [], exclude: [] },
+  zod: false,
+  infinite: false,
+  headers: { Authorization: "Bearer …" },   // for a URL input
+  tls: { insecure: false, ca: "internal-ca.pem" },
+  format: "prettier",             // or false
+  sources: { users: "https://host/users/openapi.yaml" },  // for `pull`
+  specsDir: "openapi-specs",
+  decisionsFile: "openapi-forge.decisions.json",
+  generatorName: "openapi-forge", // the banner of every file
+  verbose: false,
+
+  runtime: { /* see "Your own transport" */ },
+  transform: { /* see "Opt-in extras" */ },
+});
+```
+
+The config may also export a function (sync or async) that returns the object.
+
+## Keeping up with a changing spec
+
+`pull` fetches every document in `sources` into `specsDir` exactly as served, and prints what changed in each one in the terms of the code you consume — the operation, its generated hook, the schema and property. Every document is fetched before any is written, so a failed pull leaves the folder as it was.
 
 ```
 sightings: 5 breaking, 0 risky, 34 safe
@@ -272,34 +375,47 @@ openapi-forge diff old.yaml https://host/openapi.json --format markdown
 openapi-forge diff old.yaml new.yaml --fail-on breaking   # exit 1 on a breaking change
 ```
 
-Severity: **breaking** (removed or retyped operation, parameter, property, response; a new required parameter), **risky** (a new required property, an enum value removed, a deprecation), **safe** (additions).
+Severity: **breaking** (removed or retyped operation, parameter, property, response; a new required parameter), **risky** (a new required property, an enum value removed, a deprecation), **safe** (additions). Swagger 2.0 documents are compared after the same conversion a run reads them with.
 
-## Several services
+## Use in CI
 
-Give `input` a folder of documents (named after their files) or `{ name: fileOrUrl }`. Operations
-and components found in one service are kept; ones found in several are merged when identical and
-need an **owner** when they differ. Run in a terminal once to answer the questions — the answers
-(`main` service, `owners`) are written to `decisionsFile` and commit with the code. `--check` and CI
-never ask; they fail listing what is still undecided. Operations carry `x-service`, and
-`services.ts` exports `API_SERVICE_BASE_URLS` for the per-service base URL.
+```bash
+npx openapi-forge --check                       # fails when the committed layer is stale
+npx openapi-forge diff main.yaml pr.yaml --fail-on breaking
+npx openapi-forge doctor                        # fails on a missing package or input
+```
+
+`--check` never asks questions; with several services it fails listing the decisions that are still open.
 
 ## Programmatic use
 
-The package is written in strict TypeScript and ships its own declarations (Node ≥ 20).
-
 ```ts
-import { run, emit, mergeSpecs, defineConfig } from "@mrzr/openapi-forge";
+import { run, emit, mergeSpecs, diffDocuments, defineConfig } from "@mrzr/openapi-forge";
 
 await run({ input: "swagger.json", out: "src/api" });                 // like the CLI
 const { files } = emit(doc, resolvedOptions, "swagger.json");          // name → source, no disk
 ```
 
-## Notes
+Also exported: `generate`, `pull`, `doctor`, `watchRun`, `renderReport`, `summarize`, `exceeds`, `resolveOptions`, `loadConfigFile`, `DEFAULTS`, `camelCase`, `pascalCase` and the types `ForgeConfig`, `ForgeOptions`, `RuntimeConfig`, `OperationInfo`, `Finding`, `Check`, `EmitResult`, `RunResult`, `Transform`.
 
-- Names come from `operationId` (or `method + path`). A name already taken — the same `operationId` in two services — gets the method appended (`getUser` → `getUserGet`), and a number only if that is taken too (`getUserGet2`).
-- A `DELETE` that takes a body sends it with `fetch`, axios and Angular's `HttpClient`; `@mrzr/api-client`'s `delete` takes no body, so under the default `http` that operation is left out and listed under "things to look at" (pick another `http` to send it). A `GET` that declares a body cannot be sent, so the body is left out with a warning.
-- A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows.
-- Prettier is optional: the project's own is used when installed (with its config); otherwise output is raw.
-- Tests: `npm test` (builds, then runs the suite on Node 20, 22 and 24 alike); `npm run typecheck` checks the types only.
+## How it is tested
+
+`npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 9 clients × 62 documents pass.
+
+The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios, Angular `HttpClient` and `@mrzr/api-client` clients are called against a local HTTP server (query strings, path encoding, JSON, multipart and form bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort, bytes and text answers, a payload with a `result` field — and an interceptor, for Angular). Every hook library is executed (over `fetch`, axios and `@mrzr/api-client`, and Angular Query also over `HttpClient`): React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument moves the query, a missing id waits, a mutation sends its variables, tearing down the owner aborts a mutation still in flight, a header argument is sent and moves the query, and an infinite list pages and sends its header with every page. A custom transport is compiled with its own config type and called with only the keys it has.
+
+`npm test` builds and runs the suite (Node 20, 22 and 24 alike); `npm run typecheck` checks the types only.
+
+## Coming from Orval
+
+Orval's `client` values map like this: `react-query`, `vue-query`, `svelte-query`, `solid-query`, `angular-query` and `swr` are the `library` values above; `fetch`, `axios` and `angular` are `http` values (with `target: "requests"` for plain functions); `zod` is `zod: true`.
+
+Left out on purpose: `hono` and `mcp` generate server handlers and tools, not a client; MSW / Faker mocks do not belong in a data layer; Suspense variants would double every hook. The `angular` client is promise-based over `HttpClient`, not the Observable-returning services Orval writes — with `angular-query` on top it covers an Angular application, and the interceptors keep working.
+
+## Requirements
+
+Node ≥ 20. Prettier (≥ 3) is optional: the project's own is used when installed (with its config); otherwise the output is raw and a warning says so.
+
+## License
 
 MIT

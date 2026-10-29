@@ -93,3 +93,22 @@ test("reports render in every format", () => {
   );
   assert.equal(JSON.parse(renderReport(findings, "json")).summary.breaking, 1);
 });
+
+test("a parameter whose name has a colon is named whole", () => {
+  const withParameter = (name) => ({
+    openapi: "3.0.1",
+    paths: {
+      "/a": {
+        get: {
+          operationId: "getA",
+          parameters: [{ name, in: "query", schema: { type: "string" } }],
+          responses: { 200: { description: "ok" } },
+        },
+      },
+    },
+  });
+  const messages = diffDocuments(withParameter("filter:status"), withParameter("other")).map(
+    (item) => item.message,
+  );
+  assert.ok(messages.some((message) => message.includes("`filter:status` removed")), messages.join("\n"));
+});

@@ -193,6 +193,12 @@ function finding(
   return { severity, kind, ...subject, message, ...extra };
 }
 
+/** `query:filter:status` is the `filter:status` parameter in `query`. */
+const splitKey = (key: string): [string, string] => {
+  const at = key.indexOf(":");
+  return [key.slice(0, at), key.slice(at + 1)];
+};
+
 function diffParameters(
   before: OperationContract,
   after: OperationContract,
@@ -201,7 +207,7 @@ function diffParameters(
   const out: Finding[] = [];
   for (const [key, next] of after.parameters) {
     const previous = before.parameters.get(key);
-    const [where, name] = key.split(":");
+    const [where, name] = splitKey(key);
     if (!previous) {
       out.push(
         finding(
@@ -236,7 +242,7 @@ function diffParameters(
   }
   for (const key of before.parameters.keys()) {
     if (!after.parameters.has(key)) {
-      const [where, name] = key.split(":");
+      const [where, name] = splitKey(key);
       out.push(
         finding(
           "breaking",

@@ -1,5 +1,5 @@
-// Re-run a build whenever its inputs change: local documents and the config
-// are watched, a URL is polled. Bursts of events become one run, and a failed
+// Re-run a build whenever its inputs change: local documents are watched, a
+// URL is polled. Bursts of events become one run, and a failed
 // run is reported and waited out instead of ending the watch.
 import { existsSync, watch } from "node:fs";
 

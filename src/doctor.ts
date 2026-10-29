@@ -74,7 +74,7 @@ function checkDocument(doc: OpenApiDocument): Check[] {
     ...(duplicates.length
       ? [
           warn(
-            `duplicate operationId: ${duplicates.slice(0, 5).join(", ")} — later ones get a numeric suffix`,
+            `duplicate operationId: ${duplicates.slice(0, 5).join(", ")} — later ones get the method appended (getUser → getUserGet)`,
           ),
         ]
       : []),

@@ -1,10 +1,13 @@
 // Zod validators for the document's component schemas (`schemas.ts`). Each
 // one is annotated with its `models.ts` type, so the two cannot drift apart:
 // a schema that no longer matches its type fails to compile.
-import { camelCase, modelName, propertyName } from "./names.js";
+import { modelName, propertyName } from "./names.js";
 import type { OpenApiDocument, Schema } from "./types.js";
 
-const refName = (ref: string): string => `${camelCase(modelName(ref))}Schema`;
+const refName = (ref: string): string => {
+  const name = modelName(ref);
+  return `${name.charAt(0).toLowerCase()}${name.slice(1)}Schema`;
+};
 const list = (items: string[]): string => items.join(", ");
 
 function render(schema: Schema | boolean | undefined): string {

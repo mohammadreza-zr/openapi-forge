@@ -105,14 +105,35 @@ function schemaOfParameter(parameter: Loose): Loose {
   return schema;
 }
 
+/**
+ * How Swagger 2.0 writes a list in the query: `csv` unless the parameter says
+ * otherwise, where 3.0 repeats the key unless told not to. Spelled out, so the
+ * emitter can report a list the client would send differently.
+ */
+function queryListStyle(parameter: Loose): Loose | null {
+  if (parameter.in !== "query" || parameter.type !== "array") return null;
+  switch (parameter.collectionFormat ?? "csv") {
+    case "multi":
+      return { style: "form", explode: true };
+    case "ssv":
+      return { style: "spaceDelimited", explode: false };
+    case "pipes":
+      return { style: "pipeDelimited", explode: false };
+    case "tsv":
+      return null;
+    default:
+      return { style: "form", explode: false };
+  }
+}
+
 function convertParameter(parameter: Loose): Loose {
   const { name, in: where, required, description } = parameter;
   const out = { name, in: where, ...(description && { description }) };
   if (required !== undefined || where === "path")
     out.required = required ?? true;
   out.schema = parameter.schema ?? schemaOfParameter(parameter);
-  if (parameter.collectionFormat === "multi")
-    Object.assign(out, { style: "form", explode: true });
+  const style = queryListStyle(parameter);
+  if (style) Object.assign(out, style);
   return out;
 }
 

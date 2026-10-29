@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { get as httpGet } from "node:http";
 import { get as httpsGet } from "node:https";
 import { isAbsolute, resolve } from "node:path";
+import { rootCertificates } from "node:tls";
 import { parse as parseYaml } from "yaml";
 
 import type { OpenApiDocument } from "../types.js";
@@ -44,10 +45,12 @@ function nodeRequestText(
 ): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
     const isHttps = url.startsWith("https:");
-    const options: RequestOptions = { headers };
+    const options: Omit<RequestOptions, "ca"> & { ca?: string[] } = { headers };
     if (isHttps) {
       options.rejectUnauthorized = rejectUnauthorized;
-      if (ca !== undefined) options.ca = ca;
+      // `ca` alone would replace the public roots, so a host with a public
+      // certificate would stop verifying as soon as a private CA is named.
+      if (ca !== undefined) options.ca = [...rootCertificates, ca];
     }
     const request = (isHttps ? httpsGet : httpGet)(url, options, (response) => {
       const statusCode = response.statusCode ?? 0;
@@ -58,9 +61,11 @@ function nodeRequestText(
         redirects > 0
       ) {
         response.resume();
-        const next = new URL(response.headers.location, url).toString();
-        nodeRequestText(next, {
-          headers,
+        const next = new URL(response.headers.location, url);
+        // Credentials stay with the host they were meant for, as `fetch` does.
+        const sameOrigin = next.origin === new URL(url).origin;
+        nodeRequestText(next.toString(), {
+          headers: sameOrigin ? headers : undefined,
           ca,
           rejectUnauthorized,
           redirects: redirects - 1,

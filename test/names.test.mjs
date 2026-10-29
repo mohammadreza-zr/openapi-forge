@@ -35,3 +35,18 @@ test("modelName turns a $ref into a type name", () => {
 test("oneLine flattens prose and defuses comment terminators", () => {
   assert.equal(oneLine("a\n  b */ c"), "a b * / c");
 });
+
+test("identifier avoids every word a function or argument cannot be named", () => {
+  for (const word of ["delete", "default", "in", "for", "export", "enum", "void"])
+    assert.equal(identifier(word, "fallback"), "fallback", word);
+  assert.equal(identifier("2fa", "fallback"), "fallback");
+  assert.equal(identifier("deleteAll", "fallback"), "deleteAll");
+});
+
+test("propertyName leaves a keyword that is a legal key bare", () => {
+  assert.equal(propertyName("default"), "default");
+});
+
+test("modelName never starts with a digit", () => {
+  assert.equal(modelName("#/components/schemas/2FA"), "_2FA");
+});

@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
+
+- **Valid code for awkward names.** An `operationId` or path parameter that is a reserved word (`delete`, `default`, `in`, `for`, …) or starts with a digit (`2fa`) used to be written as it was, which does not compile; it now takes the same fallback name an empty one does. A schema that starts with a digit (`2FA`) becomes `_2FA`, and its Zod validator `_2FASchema`.
+- **Swagger 2.0 query lists.** `collectionFormat` is now carried over (`csv` is the default there, `ssv`, `pipes` and `multi` too), so a list the client would send as repeated keys instead of one line is reported, not changed in silence.
+- **`pull` compares Swagger 2.0 documents correctly.** The documents are converted before they are compared, as `diff` always did; before, a changed response or definition of a Swagger 2.0 service showed no change at all. A service that moves between JSON and YAML no longer leaves its old document in `specsDir`.
+- **`diff` names a parameter with a colon whole** (`filter:status`), not the part before the colon.
+- **A tag the document drops no longer leaves its module behind.** The run removes generated files it no longer writes (only those that still carry the generated banner) and `--check` reports them as stale; before, the old module stayed, referred to models that were gone and `--check` said the output was up to date.
+- **`--ca` adds to the public CAs** instead of replacing them, so a run that reads a private host and a public one verifies both; the headers of a document request are not sent on to another origin when `--ca` / `--insecure` reads it and the server redirects.
+- `runtime.requestKeys.body: false` is accepted with `http: "api-client"` (it only threw for a real key); `--interval` must be a positive number; `--watch` no longer says it watches the config (it never did); `doctor`'s duplicate-`operationId` hint names the method suffix.
+
+## 0.2.1
 
 - A repeated `operationId` is named with the method appended (`getUserGet`), as the README says; before, the first repeat was already numbered (`getUserGet2`). A number is added only when the name with the method is taken too.
+- Releases are cut from a `v*` tag (`npm version patch && git push --follow-tags`): the tag must match `package.json`, three Node versions verify, then npm trusted publishing and a GitHub Release.
 
 ## 0.2.0
 
