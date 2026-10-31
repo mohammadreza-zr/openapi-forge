@@ -199,7 +199,7 @@ Four clients, four different worlds. The generator does not put one behind anoth
 - **fetch**: every call starts from the `baseUrl` of `client.ts` (or its own service's base URL). The query string is built in the function from the document's parameters (`URLSearchParams`), a JSON body is `JSON.stringify`-ed with its `Content-Type`, and reading the answer (`response.json()`) is yours.
 - **Angular**: hooks are Angular Query's (`library: "angular-query"`), and a hook injects the tag's service (`inject(PetsService)`). `HttpClient` takes no `AbortSignal`; cancel by unsubscribing from the `Observable`.
 
-A multipart body is typed `FormData`; a form body is `URLSearchParams` (`HttpParams` for Angular) — the bodies each client sends as they are — so you build them yourself.
+A multipart body is typed `FormData` (with `@mrzr/api-client`, `<Body> | FormData`: the call carries the client's own `isFormData: true`, which writes a plain object as the form, a file or a list per entry and an object as JSON, and sends a `FormData` as it is); a form body is `URLSearchParams` (`HttpParams` for Angular) — the bodies each client sends as they are — so you build them yourself.
 
 What the generator does decide, from the document, is the request: the route (filled in), the query, the headers it declares, the body's shape and `Content-Type` where the client would otherwise label it wrongly, and `responseType` (`text` or `blob`) for an answer that is not JSON.
 
@@ -243,7 +243,7 @@ The generated code asks the client for what the document describes, and reports 
 | a path parameter | `encodeURIComponent` of the value in its place in the route (a list is `a,b`) |
 | a body on `DELETE` | sent (`data` in axios, `body` in `fetch` and `HttpClient`) — except by `api-client`, whose `delete` takes none: the operation is left out and listed |
 | a body on `GET` | cannot be sent: left out with a warning |
-| `multipart/form-data` | a `FormData` you build; the client sets the `Content-Type` and boundary |
+| `multipart/form-data` | a `FormData` you build (api-client also takes a plain object and writes the form itself); the client sets the `Content-Type` and boundary |
 | `application/x-www-form-urlencoded` | a `URLSearchParams` (`HttpParams` for Angular) you build; the client sets the `Content-Type` |
 | `text/plain`, `application/octet-stream`, other non-JSON bodies | sent as they are, with that `Content-Type` |
 | a non-JSON answer | the call says `responseType: "text"` (for `text/*`) or `"blob"` (anything else); the client reads it its own way. `fetch` returns the `Response` for you to read |
