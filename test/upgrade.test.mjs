@@ -97,7 +97,7 @@ test("a Swagger 2.0 document emits real models and typed requests", () => {
   const pets = emit(swagger(), options({ http: "fetch" }), "swagger.json");
   assert.match(pets.files.get("models.ts"), /export type Pet = \{/);
   const code = pets.files.get("pets.ts");
-  assert.match(code, /export function getPet\(\s*id: number,\s*query/);
+  assert.match(code, /export function getPet\(\s*id: number,\s*params/);
   assert.match(code, /export function putPet\(\s*id: number,\s*body: Pet/);
   assert.equal(pets.problems.length, 0);
 });

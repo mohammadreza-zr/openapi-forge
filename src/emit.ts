@@ -69,6 +69,7 @@ const CALLED_BY_NAME = new Set([
 ]);
 const LOCAL_NAMES = new Set([
   "query",
+  "params",
   "body",
   "headers",
   "config",
@@ -107,6 +108,9 @@ export function emit(
   // returns what that client returns.
   const style = builtin ? options.http : null;
   const service = style === "angular";
+  // The query argument is named as the client names it (`params` in all four
+  // built-in clients); a custom transport's own key names it.
+  const queryArg = builtin ? "params" : rt.requestKeys.query;
   /** What a call resolves to, as the chosen client gives it. */
   const answerOf = (payload: string) =>
     style === "api-client"
@@ -832,7 +836,7 @@ export function emit(
     return [
       requestDoc(operation),
       `export function ${prefix}${pascalCase(operation.name)}InfiniteQuery(`,
-      `  query: ${argType(omit)}${optional ? " = {}" : ""},`,
+      `  ${queryArg}: ${argType(omit)}${optional ? " = {}" : ""},`,
       ...(headers
         ? [`  headers: ${argType(headers)}${headersAreOptional(operation) ? " = {}" : ""},`]
         : []),
@@ -840,9 +844,9 @@ export function emit(
       `) {`,
       ...serviceLine(keys),
       `  return ${rt.hooks.infinite}(`,
-      `    ${lazy(`${keys}.${infiniteKey(operation)}(${argRead("query")}${headers ? `, ${argRead("headers")}` : ""})`)},`,
+      `    ${lazy(`${keys}.${infiniteKey(operation)}(${argRead(queryArg)}${headers ? `, ${argRead("headers")}` : ""})`)},`,
       `    (page${service ? "" : ", signal"}) =>`,
-      `      ${callOf(operation, [`{ ...${argRead("query")}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }`, ...(headers ? [argRead("headers")] : [])])}${pageOf(`${list && list.name}<${item}>`)},`,
+      `      ${callOf(operation, [`{ ...${argRead(queryArg)}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }`, ...(headers ? [argRead("headers")] : [])])}${pageOf(`${list && list.name}<${item}>`)},`,
       `    options,`,
       `  );`,
       `}`,
@@ -1126,7 +1130,7 @@ export function emit(
     );
     if (operation.queryParams.length) {
       const required = operation.queryParams.some((item) => item.required);
-      parts.push(`query${required ? "" : "?"}: ${queryTypeName(operation)}`);
+      parts.push(`${queryArg}${required ? "" : "?"}: ${queryTypeName(operation)}`);
     }
     if (operation.headerParams.length) {
       parts.push(
@@ -1158,7 +1162,7 @@ export function emit(
     );
     if (operation.queryParams.length) {
       args.push(
-        `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
+        `${queryArg}: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
     }
     if (operation.bodySchema) {
@@ -1172,7 +1176,7 @@ export function emit(
     if (operation.queryParams.length) {
       // Its `ordering` is a typed sort order; a plain parameter of that name is not.
       const clash = operation.queryParams.some((item) => item.name === "ordering");
-      configLines.push(`params: query${clash ? " as never" : ""}`);
+      configLines.push(clash ? "params: params as never" : "params");
     }
     if (operation.pathParams.length) {
       const plain = /^(string|number|"[^"]*"( \| "[^"]*")*|-?\d+( \| -?\d+)*)$/;
@@ -1266,7 +1270,7 @@ export function emit(
     );
     if (operation.queryParams.length) {
       args.push(
-        `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
+        `${queryArg}: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
     }
     if (operation.headerParams.length) {
@@ -1298,28 +1302,27 @@ export function emit(
 
     if (style === "fetch") {
       if (operation.queryParams.length) {
-        lines.push("const params = new URLSearchParams();");
+        lines.push("const search = new URLSearchParams();");
         for (const item of operation.queryParams) {
           const schema = deref(item.schema);
-          const value = member("query", item.name);
+          const value = member(queryArg, item.name);
           const key = JSON.stringify(item.name);
           if (schema.type === "array") {
             lines.push(
-              `for (const item of ${value}${item.required ? "" : " ?? []"}) params.append(${key}, String(item));`,
+              `for (const item of ${value}${item.required ? "" : " ?? []"}) search.append(${key}, String(item));`,
             );
           } else if (schema.type === "object" || (!schema.type && schema.properties)) {
             lines.push(
-              `for (const [name, item] of Object.entries(${value}${item.required ? "" : " ?? {}"})) params.append(${key} + "[" + name + "]", String(item));`,
+              `for (const [name, item] of Object.entries(${value}${item.required ? "" : " ?? {}"})) search.append(${key} + "[" + name + "]", String(item));`,
             );
           } else if (item.required) {
-            lines.push(`params.append(${key}, String(${value}));`);
+            lines.push(`search.append(${key}, String(${value}));`);
           } else {
             lines.push(
-              `if (${value} !== undefined) params.append(${key}, String(${value}));`,
+              `if (${value} !== undefined) search.append(${key}, String(${value}));`,
             );
           }
         }
-        lines.push("const search = params.toString();");
       }
       // `fetch` writes no JSON of its own: the body is stringified and named.
       const named = hasBody && kind === "json" ? (contentType ?? "application/json") : contentType;
@@ -1349,7 +1352,7 @@ export function emit(
           : []),
       ];
       lines.push(
-        `return fetch(${url}${operation.queryParams.length ? ' + (search ? "?" + search : "")' : ""}, { ${init.join(", ")} });`,
+        `return fetch(${url}${operation.queryParams.length ? ' + (search.toString() ? "?" + search : "")' : ""}, { ${init.join(", ")} });`,
       );
       return [
         requestDoc(operation),
@@ -1369,7 +1372,7 @@ export function emit(
     {
       const config = [
         "...config",
-        ...(operation.queryParams.length ? ["params: query"] : []),
+        ...(operation.queryParams.length ? ["params"] : []),
         ...(headerLines.length ? [`headers: { ...config?.headers, ${headerLines.join(", ")} }`] : []),
         ...(responseType ? [`responseType: ${JSON.stringify(responseType)}`] : []),
         ...(operation.method === "delete" && hasBody ? ["data: body"] : []),
@@ -1406,7 +1409,7 @@ export function emit(
     );
     if (operation.queryParams.length) {
       args.push(
-        `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
+        `${queryArg}: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
     }
     if (operation.headerParams.length) {
@@ -1422,7 +1425,7 @@ export function emit(
     args.push(`config?: ${rt.types.request}<${payload}>`);
 
     const configLines = ["...config"];
-    if (operation.queryParams.length) configLines.push(`${keys.query}: query`);
+    if (operation.queryParams.length) configLines.push(keys.query === queryArg ? queryArg : `${keys.query}: ${queryArg}`);
     if (operation.pathParams.length) {
       // The URL's `{user_id}` is replaced by the key it is written with, not
       // by the camelCased argument that carries the value.
@@ -1499,7 +1502,7 @@ export function emit(
     );
     if (operation.queryParams.length) {
       args.push(
-        `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
+        `${queryArg}: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
     }
     if (operation.headerParams.length) {
@@ -1523,7 +1526,7 @@ export function emit(
       ? `API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}] + `
       : "";
     const options = [
-      ...(operation.queryParams.length ? ["params: query"] : []),
+      ...(operation.queryParams.length ? ["params"] : []),
       ...(headerEntries.length ? [`headers: { ${headerEntries.join(", ")} }`] : []),
       ...(responseType ? [`responseType: ${JSON.stringify(responseType)}`] : []),
       ...(operation.method === "delete" && hasBody ? ["body"] : []),
@@ -1568,7 +1571,7 @@ export function emit(
     );
     if (operation.queryParams.length) {
       params.push(
-        `query: ${argType(queryTypeName(operation))}${queryIsOptional(operation) ? " = {}" : ""}`,
+        `${queryArg}: ${argType(queryTypeName(operation))}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
     }
     if (operation.headerParams.length) {
@@ -1583,7 +1586,7 @@ export function emit(
     );
 
     const inputs = [
-      ...(operation.queryParams.length ? [argRead("query")] : []),
+      ...(operation.queryParams.length ? [argRead(queryArg)] : []),
       ...(operation.headerParams.length ? [argRead("headers")] : []),
     ];
     const keyArgs = [
@@ -1636,9 +1639,9 @@ export function emit(
       const slots = [...pathArgNames(operation)];
       const callArgs = [...pathArgNames(operation)];
       if (operation.queryParams.length) {
-        slots.push("query");
+        slots.push(queryArg);
         // A required query has no `{}` to fall back to.
-        callArgs.push(queryIsOptional(operation) ? "query ?? {}" : "query");
+        callArgs.push(queryIsOptional(operation) ? `${queryArg} ?? {}` : queryArg);
       }
       if (operation.headerParams.length) {
         slots.push("headers");

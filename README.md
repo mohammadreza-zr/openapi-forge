@@ -129,15 +129,15 @@ export const petsKeys = {
 export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string[] };
 
 /** List the pets — `GET /pets` */
-export function listPets(query: ListPetsQuery = {}, config?: RequestConfig<ApiListData<Pet>>) { … }   // the client's own config type
+export function listPets(params: ListPetsQuery = {}, config?: RequestConfig<ApiListData<Pet>>) { … }   // the client's own config type
 
-export function useListPetsQuery(query: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
+export function useListPetsQuery(params: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
 export function useGetPetQuery(petId: string, options?: ApiQueryOptions<…>) { … }
 export function useCreatePetMutation(options?: ApiMutationOptions<Pet, CreatePetVariables>) { … }
 ```
 
-- A write takes **one variables object** (`{ petId, query, headers, body }` — only the parts it has), named `<Operation>Variables`.
-- Query and header parameters get `<Operation>Query` / `<Operation>Headers` types.
+- A write takes **one variables object** (`{ petId, params, headers, body }` — only the parts it has), named `<Operation>Variables`.
+- Query and header parameters get `<Operation>Query` / `<Operation>Headers` types. The query argument is called `params`, as every built-in client calls it (`runtime.requestKeys.query` names it for a custom transport); path arguments keep the document's names.
 - An operation with no tag goes to the `default` module.
 
 ## Hook libraries

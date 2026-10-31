@@ -76,7 +76,7 @@ test("infinite adds one hook and one key to a paged read", () => {
   );
   assert.match(
     items,
-    /useListItemsInfiniteQuery\(\s*query: Omit<ListItemsQuery, "start" \| "offset"> = \{\}/,
+    /useListItemsInfiniteQuery\(\s*params: Omit<ListItemsQuery, "start" \| "offset"> = \{\}/,
   );
   assert.match(items, /listItemsInfinite: \(params:/);
   assert.match(items, /start: page\.start, offset: page\.size/);

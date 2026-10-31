@@ -80,25 +80,25 @@ test("reactive libraries read each argument where the request is made", () => {
     assert.match(
       pets,
       new RegExp(
-        `${prefix}ListVisitsQuery\\(\\s*petId: MaybeGetter<string>,\\s*query: MaybeGetter<ListVisitsQuery>,`,
+        `${prefix}ListVisitsQuery\\(\\s*petId: MaybeGetter<string>,\\s*params: MaybeGetter<ListVisitsQuery>,`,
       ),
       library,
     );
     assert.match(
       pets,
-      /\(\) => petsKeys\.listVisits\(toValue\(petId\), toValue\(query\)\)/,
+      /\(\) => petsKeys\.listVisits\(toValue\(petId\), toValue\(params\)\)/,
     );
     assert.match(
       pets,
-      /\(signal\) => listVisits\(toValue\(petId\), toValue\(query\), \{ signal \}\)/,
+      /\(signal\) => listVisits\(toValue\(petId\), toValue\(params\), \{ signal \}\)/,
     );
     assert.match(
       pets,
-      /query: MaybeGetter<Omit<ListPetsQuery, "start" \| "offset">> = \{\}/,
+      /params: MaybeGetter<Omit<ListPetsQuery, "start" \| "offset">> = \{\}/,
     );
     assert.match(
       pets,
-      /\.\.\.toValue\(query\), start: page\.start, offset: page\.size/,
+      /\.\.\.toValue\(params\), start: page\.start, offset: page\.size/,
     );
   }
 });
@@ -215,8 +215,8 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   // fetch: the platform function, its init, its Response.
   const fetched = pets("fetch");
   assert.match(fetched, /export function getPet\(petId: string, init\?: RequestInit\) \{\s*return fetch\(petsEndpoints\.getPet\.replace/);
-  assert.match(fetched, /const params = new URLSearchParams\(\);/);
-  assert.match(fetched, /for \(const item of query\.ids \?\? \[\]\) params\.append\("ids", String\(item\)\);/);
+  assert.match(fetched, /const search = new URLSearchParams\(\);/);
+  assert.match(fetched, /for \(const item of params\.ids \?\? \[\]\) search\.append\("ids", String\(item\)\);/);
   assert.match(fetched, /ApiQueryOptions<Response,/);
   assert.match(fetched, /if \(!requestHeaders\.has\("Content-Type"\)\) requestHeaders\.set\("Content-Type", "application\/json"\);/);
   assert.match(fetched, /body: JSON\.stringify\(body\)/);

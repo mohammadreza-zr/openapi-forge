@@ -90,7 +90,7 @@ test("a custom runtime changes what the code imports and calls", () => {
   }).files.get("pets.ts");
   assert.match(pets, /import \{ .*httpGet.* \} from "@app\/http";/);
   assert.match(pets, /import \{ .*useQ.* \} from "@app\/hooks";/);
-  assert.match(pets, /searchParams: query/);
+  assert.match(pets, /\.\.\.config,\s*searchParams,/);
   assert.match(pets, /pathVars: \{ pet_id: petId \}/);
 });
 
