@@ -10,9 +10,11 @@ globalThis.window = globalThis;
 
 import { compileCjs, generateTo, until } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
+import { pointClient } from "./probes/point.cjs";
 import { edgesApi, serve } from "./server.mjs";
 
-for (const http of ["fetch", "axios", "api-client"]) describe(`header parameters in the vue-query hooks over ${http}`, () => {
+// The client's headers are its own: the api-client functions take none as an argument.
+for (const http of ["fetch", "axios"]) describe(`header parameters in the vue-query hooks over ${http}`, () => {
   let server;
   let vue;
   let app;
@@ -31,7 +33,7 @@ for (const http of ["fetch", "axios", "api-client"]) describe(`header parameters
     vue = require("vue");
     const { QueryClient, VueQueryPlugin } = require("@tanstack/vue-query");
     server = await serve(edgesApi);
-    require(join(js, "client.js")).configureClient({ baseUrl: server.base });
+    pointClient(http, require(join(js, "client.js")), require, server.base);
     app = vue.createApp({});
     client = new QueryClient({
       defaultOptions: { queries: { gcTime: 0 }, mutations: { gcTime: 0 } },

@@ -71,6 +71,10 @@ export function emit(
   const { list, envelope } = rt;
   const { infinite } = options;
   const hooks = options.target === "hooks";
+  // `@mrzr/api-client` is called as it is: every function below calls the
+  // client itself, takes its own `RequestConfig` and returns its own `IRes`.
+  const direct = options.client === "builtin" && options.http === "api-client";
+  const answerOf = (payload: string) => (direct ? `IRes<${payload}>` : payload);
   const { prefix } = LIBRARIES[options.library];
   // A reactive library reads its arguments where the request is made, so a
   // ref, a signal or a getter in their place keeps the query in step.
@@ -412,7 +416,7 @@ export function emit(
           const gap =
             item.in === "cookie"
               ? "is a cookie, which the client cannot send: a browser attaches cookies itself"
-              : item.in === "header" && !ignored && !rt.requestKeys.headers
+              : item.in === "header" && !ignored && !rt.requestKeys.headers && !direct
                 ? "is a header, which the custom client takes none of (`runtime.requestKeys.headers`)"
                 : null;
           if (gap) {
@@ -424,11 +428,12 @@ export function emit(
           Object.entries(operation.responses ?? {}).find(([status]) =>
             /^2\d\d$/.test(status),
           )?.[1] ?? {};
-        const successContent =
-          success.content?.["application/json"] ??
-          success.content?.["application/*+json"] ??
-          Object.values(success.content ?? {}).find((item) => item?.schema) ??
+        const successEntry =
+          Object.entries(success.content ?? {}).find(([type]) => type === "application/json") ??
+          Object.entries(success.content ?? {}).find(([type]) => type === "application/*+json") ??
+          Object.entries(success.content ?? {}).find(([, item]) => item?.schema) ??
           null;
+        const successContent = successEntry?.[1] ?? null;
 
         let built: OperationInfo = {
           name,
@@ -455,7 +460,9 @@ export function emit(
                   path,
                 }) ?? item.name,
             })),
-          headerParams: rt.requestKeys.headers
+          // @mrzr/api-client takes its headers in the config of the call, as its
+          // own: a header parameter is not an argument of the function there.
+          headerParams: rt.requestKeys.headers && !direct
             ? parameters.filter(
                 (item) => item.in === "header" && !IGNORED_HEADERS.has(item.name.toLowerCase()),
               )
@@ -464,6 +471,7 @@ export function emit(
           bodyRequired: sendsBody && operation.requestBody?.required === true,
           bodyMediaType: sendsBody && requestMedia?.schema ? bodyEntry![0] : null,
           responseSchema: successContent?.schema ?? null,
+          responseMediaType: successEntry?.[0] ?? null,
           service: operation["x-service"] ?? null,
         };
 
@@ -603,8 +611,17 @@ export function emit(
     !operation.headerParams.some((item) => item.required);
   const variablesTypeName = (operation: OperationInfo) =>
     `${pascalCase(operation.name)}Variables`;
-  const bodyTypeName = (operation: OperationInfo) =>
-    typeFor(operation.bodySchema, `${pascalCase(operation.name)}Body`);
+  const bodyTypeName = (operation: OperationInfo) => {
+    const type = typeFor(operation.bodySchema, `${pascalCase(operation.name)}Body`);
+    // @mrzr/api-client takes a multipart or form body as the object it sends: a
+    // FormData or a URLSearchParams, not a plain object it would write as JSON.
+    if (direct) {
+      const kind = bodyKind(operation.bodyMediaType);
+      if (kind === "multipart") return "FormData";
+      if (kind === "urlencoded") return "URLSearchParams";
+    }
+    return type;
+  };
 
   /**
    * A header is text on the wire. When every declared header is already a
@@ -615,6 +632,8 @@ export function emit(
   function headerSpread(operation: OperationInfo) {
     const isText = (type: string) =>
       /^(string|"[^"]*"(\s\|\s"[^"]*")*)$/.test(type);
+    // Text headers go as they are. One that is not text (a number, a flag, a
+    // list) cannot be a header value as typed, so it is written with `String()`.
     if (operation.headerParams.every((item) => isText(paramType(item)))) {
       return "...headers";
     }
@@ -638,7 +657,7 @@ export function emit(
   /**
    * How emitted code reads a route back out of its tag's `Endpoints` map: the
    * operation's own key there, so the URL itself is written once — in the map —
-   * and the request function and the query key both point at it.
+   * and every request function points at it.
    */
   function endpointRef(endpoints: string, operation: OperationInfo) {
     const name = propertyName(operation.name);
@@ -683,11 +702,11 @@ export function emit(
 
   const infiniteKey = (operation: OperationInfo) => `${operation.name}Infinite`;
 
-  function infiniteKeyEntry(operation: OperationInfo, keys: string, endpoints: string) {
+  function infiniteKeyEntry(operation: OperationInfo, keys: string) {
     const { omit, headers } = infiniteOf(operation)!;
     return [
       `  ${infiniteKey(operation)}: (params: ${omit}${headers ? `, headers: ${headers}` : ""}) =>`,
-      `    [...${keys}.lists(), ${endpointRef(endpoints, operation)}, "infinite", params${headers ? ", headers" : ""}] as const,`,
+      `    [...${keys}.all, ${JSON.stringify(infiniteKey(operation))}, params${headers ? ", headers" : ""}] as const,`,
     ].join("\n");
   }
 
@@ -707,7 +726,7 @@ export function emit(
       `  return ${rt.hooks.infinite}(`,
       `    ${lazy(`${keys}.${infiniteKey(operation)}(${argRead("query")}${headers ? `, ${argRead("headers")}` : ""})`)},`,
       `    (page, signal) =>`,
-      `      ${operation.name}({ ...${argRead("query")}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }, ${headers ? `${argRead("headers")}, ` : ""}{ ${signal === "signal" ? "signal" : `${signal}: signal`} }),`,
+      `      ${operation.name}({ ...${argRead("query")}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }, ${headers ? `${argRead("headers")}, ` : ""}{ ${signal === "signal" ? "signal" : `${signal}: signal`} })${direct ? `.then((response) => response.data as ${list && list.name}<${item}>)` : ""},`,
       `    options,`,
       `  );`,
       `}`,
@@ -725,8 +744,8 @@ export function emit(
       [
         `/**`,
         ` * The routes of "${tag}" — the one place each URL is written. The`,
-        ` * request functions read their route from here${hooks ? ", and so do the keys," : ","}`,
-        ` * so a path moves in a single line.`,
+        ` * request functions read their route from here, so a path moves in a`,
+        ` * single line.`,
         ` */`,
         `export const ${endpoints} = {`,
         ...operations.map(
@@ -735,7 +754,7 @@ export function emit(
         ),
         "} as const;",
       ].join("\n"),
-      hooks ? keyFactoryBlock(tag, operations, keys, endpoints) : "",
+      hooks ? keyFactoryBlock(tag, operations, keys) : "",
       shareIdenticalTypes(
         [
           ...operations.flatMap((operation) => [
@@ -773,10 +792,18 @@ export function emit(
   /** Only what this tag uses — a project may compile with `noUnusedLocals`. */
   function importBlock(operations: OperationInfo[], body: string) {
     const lines = [];
-    const callers = [
-      ...new Set(operations.map((item) => rt.callers[item.method])),
-    ].sort();
-    lines.push(`import { ${callers.join(", ")} } from "${rt.callers.module}";`);
+    if (direct) {
+      lines.push(`import { apiClient } from "${rt.callers.module}";`);
+      const fromClient = ["IRes", "RequestConfig"].filter((name) =>
+        body.includes(`${name}<`),
+      );
+      lines.push(`import type { ${fromClient.join(", ")} } from "@mrzr/api-client";`);
+    } else {
+      const callers = [
+        ...new Set(operations.map((item) => rt.callers[item.method])),
+      ].sort();
+      lines.push(`import { ${callers.join(", ")} } from "${rt.callers.module}";`);
+    }
     const usesList =
       list &&
       operations.some((operation) =>
@@ -809,7 +836,7 @@ export function emit(
       lines.push(`import { API_SERVICE_BASE_URLS } from "./services";`);
     }
     const types = [
-      rt.types.request,
+      ...(direct ? [] : [rt.types.request]),
       ...(listWithTypes ? [list.name] : []),
       ...(usesInfinite ? [rt.types.infinite] : []),
       ...(usesQuery ? [rt.types.query] : []),
@@ -818,9 +845,11 @@ export function emit(
         ? [rt.types.maybeGetter]
         : []),
     ].sort();
-    lines.push(
-      `import type { ${types.join(", ")} } from "${rt.types.module}";`,
-    );
+    if (types.length) {
+      lines.push(
+        `import type { ${types.join(", ")} } from "${rt.types.module}";`,
+      );
+    }
 
     const available = new Set([
       ...Object.keys(registry()),
@@ -848,18 +877,17 @@ export function emit(
   }
 
   /**
-   * `all` invalidates the whole tag; a key per read operation keeps its
-   * arguments in the cache identity. The leaf before those arguments is the
-   * operation's route, read from the tag's `Endpoints` map.
+   * `all` is the tag, so one call invalidates all of it; a key per read is the
+   * tag, the operation's name and the arguments its answer depends on. The name
+   * tells two reads of one tag apart (a detail by id and by code), so no route
+   * has to be spelled into a key.
    */
-  function keyFactoryBlock(tag: string, operations: OperationInfo[], keys: string, endpoints: string) {
+  function keyFactoryBlock(tag: string, operations: OperationInfo[], keys: string) {
     const reads = operations.filter((operation) => operation.method === "get");
     return [
       `/** Query keys for "${tag}". */`,
       `export const ${keys} = {`,
       `  all: [${JSON.stringify(tag)}] as const,`,
-      `  lists: () => [...${keys}.all, "list"] as const,`,
-      `  details: () => [...${keys}.all, "detail"] as const,`,
       ...reads.map((operation) => {
         const isDetail = operation.pathParams.length > 0;
         // What the answer depends on beside the route: a detail read that also
@@ -890,12 +918,12 @@ export function emit(
         ].join(", ");
         return [
           `  ${propertyName(operation.name)}: (${args}) =>`,
-          `    [...${keys}.${isDetail ? "details()" : "lists()"}, ${endpointRef(endpoints, operation)}${tail ? `, ${tail}` : ""}] as const,`,
+          `    [...${keys}.all, ${JSON.stringify(operation.name)}${tail ? `, ${tail}` : ""}] as const,`,
         ].join("\n");
       }),
       ...reads
         .filter((operation) => infiniteOf(operation))
-        .map((operation) => infiniteKeyEntry(operation, keys, endpoints)),
+        .map((operation) => infiniteKeyEntry(operation, keys)),
       "} as const;",
     ].join("\n");
   }
@@ -960,7 +988,88 @@ export function emit(
       .join("\n")}\n};`;
   }
 
+  /**
+   * A call straight on the client (`@mrzr/api-client`): its own config in, its
+   * own answer out. Only what the document describes is put in the config, and
+   * a body that is not JSON is shaped by the helpers `client.ts` exports.
+   */
+  function directRequestBlock(operation: OperationInfo, endpoints: string) {
+    const payload = payloadFor(operation);
+    const args = operation.pathParams.map(
+      (item) =>
+        `${identifier(item.name, `${operation.name}Path`)}: ${paramType(item)}`,
+    );
+    if (operation.queryParams.length) {
+      args.push(
+        `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
+      );
+    }
+    if (operation.bodySchema) {
+      args.push(
+        `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
+      );
+    }
+    args.push(`config?: RequestConfig<${payload}>`);
+
+    const configLines = ["...config"];
+    if (operation.queryParams.length) {
+      // Its `ordering` is a typed sort order; a plain parameter of that name is not.
+      const clash = operation.queryParams.some((item) => item.name === "ordering");
+      configLines.push(`params: query${clash ? " as never" : ""}`);
+    }
+    if (operation.pathParams.length) {
+      const plain = /^(string|number|"[^"]*"( \| "[^"]*")*|-?\d+( \| -?\d+)*)$/;
+      const entries = operation.pathParams.map((item, index) => {
+        const argument = pathArgNames(operation)[index];
+        const value = plain.test(paramType(item)) ? argument : `String(${argument})`;
+        return item.name === value
+          ? value
+          : `${propertyName(item.name)}: ${value}`;
+      });
+      configLines.push(`addTemplateToUrl: { ${entries.join(", ")} }`);
+    }
+    // The client knows a FormData, a URLSearchParams and a Blob when it sees one
+    // and sets their Content-Type itself; only a text body, which it would
+    // label JSON, is told what the document says.
+    const kind = bodyKind(operation.bodyMediaType);
+    const headerEntries =
+      kind === "raw"
+        ? [`"Content-Type": ${JSON.stringify(operation.bodyMediaType)}`]
+        : [];
+    if (headerEntries.length) {
+      configLines.push(`headers: { ...config?.headers, ${headerEntries.join(", ")} }`);
+    }
+    const answer = operation.responseMediaType;
+    if (answer && !answer.includes("json")) {
+      configLines.push(
+        `responseType: ${JSON.stringify(answer.startsWith("text/") ? "text" : "blob")}`,
+      );
+    }
+    if (operation.service) {
+      configLines.push(
+        `baseUrl: config?.baseUrl ?? API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}]`,
+      );
+    }
+
+    const callArgs = [endpointRef(endpoints, operation)];
+    if (["post", "put", "patch"].includes(operation.method)) {
+      callArgs.push(operation.bodySchema ? "body" : "undefined");
+    }
+    callArgs.push(
+      `{\n${configLines.map((line) => `    ${line}`).join(",\n")},\n  }`,
+    );
+    return [
+      requestDoc(operation),
+      `export function ${operation.name}(${args.join(", ")}) {`,
+      `  return apiClient.${operation.method}<${payload}>(`,
+      `    ${callArgs.join(",\n    ")},`,
+      `  );`,
+      `}`,
+    ].join("\n");
+  }
+
   function requestBlock(operation: OperationInfo, endpoints: string) {
+    if (direct) return directRequestBlock(operation, endpoints);
     const payload = payloadFor(operation);
     const caller = rt.callers[operation.method];
     const keys = rt.requestKeys;
@@ -1020,6 +1129,13 @@ export function emit(
     if (keys.envelope && wrapsEnvelope(operation)) {
       configLines.push(`${keys.envelope}: true`);
     }
+    // An answer that is not JSON is read as text or as bytes, as the document says.
+    const answer = operation.responseMediaType;
+    if (keys.responseType && answer && !answer.includes("json")) {
+      configLines.push(
+        `${keys.responseType}: ${JSON.stringify(answer.startsWith("text/") ? "text" : "blob")}`,
+      );
+    }
     // `apiDelete(route, config)` has no body argument, so a DELETE's body rides in the config.
     if (operation.method === "delete" && operation.bodySchema && keys.body) {
       configLines.push(`${keys.body}: body`);
@@ -1030,7 +1146,6 @@ export function emit(
       );
     }
 
-    // The route, not a copy of it — see `endpointRef`.
     const callArgs = [endpointRef(endpoints, operation)];
     if (["post", "put", "patch"].includes(operation.method)) {
       callArgs.push(operation.bodySchema ? "body" : "null");
@@ -1063,19 +1178,11 @@ export function emit(
     return `/**\n${lines.map((line) => ` * ${line}`).join("\n")}\n */`;
   }
 
-  /** What a missing path argument is keyed as while its query is disabled. */
-  function keyFallback(type: string) {
-    if (type === "string") return '""';
-    if (type === "number") return "0";
-    if (type === "boolean") return "false";
-    return "undefined as never";
-  }
-
   function queryHookBlock(operation: OperationInfo, keys: string) {
     const payload = payloadFor(operation);
     const params = operation.pathParams.map(
       (item) =>
-        `${identifier(item.name, `${operation.name}Path`)}: ${argType(`${paramType(item)} | undefined`)}`,
+        `${identifier(item.name, `${operation.name}Path`)}: ${argType(paramType(item))}`,
     );
     if (operation.queryParams.length) {
       params.push(
@@ -1090,7 +1197,7 @@ export function emit(
     // The key type is the factory's own return type: a wider `QueryKey` here
     // makes `enabled` and `placeholderData` unassignable.
     params.push(
-      `options?: ${rt.types.query}<${payload}, ReturnType<typeof ${keys}.${operation.name}>>`,
+      `options?: ${rt.types.query}<${answerOf(payload)}, ReturnType<typeof ${keys}.${operation.name}>>`,
     );
 
     const inputs = [
@@ -1098,32 +1205,13 @@ export function emit(
       ...(operation.headerParams.length ? [argRead("headers")] : []),
     ];
     const keyArgs = [
-      ...pathArgNames(operation).map(
-        (item, index) =>
-          `${argRead(item)} ?? ${keyFallback(paramType(operation.pathParams[index]))}`,
-      ),
+      ...pathArgNames(operation).map((item) => argRead(item)),
       ...inputs,
     ].join(", ");
     const callArgs = [
-      ...pathArgNames(operation).map((item) => `${argRead(item)}!`),
+      ...pathArgNames(operation).map((item) => argRead(item)),
       ...inputs,
     ];
-    // A detail query waits for its id instead of requesting `/stations/undefined`.
-    // The caller's `options` win, so it can still force `enabled`.
-    const waiting = pathArgNames(operation);
-    const guard = !waiting.length
-      ? ""
-      : reactive
-        ? lazy(
-            `[${waiting.map(argRead).join(", ")}].every((value) => value !== undefined && !Number.isNaN(value))`,
-          )
-        : waiting
-            .map((item, index) =>
-              paramType(operation.pathParams[index]) === "number"
-                ? `${item} !== undefined && !Number.isNaN(${item})`
-                : `${item} !== undefined`,
-            )
-            .join(" && ");
     const signal = rt.requestKeys.signal;
     const signalArg =
       signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
@@ -1134,11 +1222,7 @@ export function emit(
       `  return ${rt.hooks.query}(`,
       `    ${lazy(`${keys}.${operation.name}(${keyArgs})`)},`,
       `    (signal) => ${operation.name}(${callArgs.length ? `${callArgs.join(", ")}, ` : ""}${signalArg}),`,
-      ...(reactive
-        ? [`    options,`, ...(guard ? [`    ${guard},`] : [])]
-        : guard
-          ? [`    { enabled: ${guard}, ...options },`]
-          : [`    options,`]),
+      `    options,`,
       `  );`,
       `}`,
     ].join("\n");
@@ -1160,7 +1244,7 @@ export function emit(
     const lines = [
       requestDoc(operation),
       `export function ${prefix}${pascalCase(operation.name)}Mutation(`,
-      `  options?: ${rt.types.mutation}<${payload}, ${variablesType}>,`,
+      `  options?: ${rt.types.mutation}<${answerOf(payload)}, ${variablesType}>,`,
       `) {`,
       `  return ${rt.hooks.mutation}(${keys}.all,`,
     ];
@@ -1273,6 +1357,24 @@ export function emit(
           checkQueryEncoding(parameter);
         }
       }
+      // A paged read whose answer is not the list itself (it may be wrapped, and
+      // a client that hands the answer over as it is leaves it wrapped).
+      if (
+        hooks &&
+        infinite &&
+        list &&
+        operation.method === "get" &&
+        !operation.pathParams.length &&
+        !infiniteOf(operation)
+      ) {
+        const names = operation.queryParams.map((item) => item.name);
+        if (names.includes(infinite.start) && names.includes(infinite.size)) {
+          problems.set(`${at}: infinite`, {
+            where: at,
+            message: `takes \`${infinite.start}\` and \`${infinite.size}\` but its answer is not ${list.name} (\`${list.count}\` and \`${list.items}\`, both required), so no infinite hook is written`,
+          });
+        }
+      }
     }
   }
 
@@ -1348,6 +1450,23 @@ export function emit(
     }
   }
 
+  /**
+   * Whether two models of one shape are one model. A schema the document
+   * names is a contract of its own — a request body is not the entity it
+   * resembles, and two services' types do not become one — so two of those
+   * never merge. A shape the generator named (an inline object) has no
+   * identity beyond its shape and joins an identical one, but only when the
+   * shape says something of its own: it names another model, or has three
+   * fields. A bare \`{ id, name }\` or \`{ file }\` is coincidence.
+   */
+  const documented = new Set(Object.keys(registry()));
+  const sameModel = (a: string, b: string, shape: string): boolean => {
+    if (documented.has(a) && documented.has(b)) return false;
+    const fields = shape.split("\n").filter((line) => /^\s+\S+\??: /.test(line)).length;
+    const words: string[] = shape.match(/\b[A-Z]\w*/g) ?? [];
+    return fields >= 3 || words.some((word) => modelBlocks.has(word));
+  };
+
   const files = new Map<string, string>();
   const modelsImport = envelope && hasEnvelopeTypes
     ? `import type { ${envelope.name} } from "${envelope.module}";\n\n`
@@ -1357,10 +1476,7 @@ export function emit(
     `${bannerFrom}\n\n` +
       modelsImport +
       (modelBlocks.size
-        ? shareIdenticalTypes(
-            [...modelBlocks.values()],
-            (a, b) => a.includes(b) || b.includes(a),
-          ).join("\n\n")
+        ? shareIdenticalTypes([...modelBlocks.values()], sameModel).join("\n\n")
         : "export {};") +
       "\n",
   );

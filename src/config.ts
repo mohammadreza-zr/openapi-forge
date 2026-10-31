@@ -80,6 +80,7 @@ export const builtinRuntime = (library: LibraryName): RuntimeConfig => ({
     headers: "headers",
     envelope: "isEnvelope",
     body: "body",
+    responseType: "responseType",
   },
   /** How a service's base URL is spelled in `services.ts`. */
   services: { module: undefined, fn: undefined, baseUrls: {} },
@@ -205,15 +206,24 @@ export function resolveOptions(
   }
   const base = { ...DEFAULTS, runtime: builtinRuntime(library) };
   const merged = merge(merge(base, fileConfig), cliOptions);
-  const named = (key: "headers" | "envelope" | "body") =>
+  const named = (key: "headers" | "envelope" | "body" | "responseType") =>
     cliOptions.runtime?.requestKeys?.[key] ??
     fileConfig.runtime?.requestKeys?.[key];
   // A custom transport knows nothing of the keys the built-in one reads, so
   // they are only written for it when the project names them.
   if (merged.client === "custom") {
-    for (const key of ["headers", "envelope", "body"] as const) {
+    for (const key of ["headers", "envelope", "body", "responseType"] as const) {
       if (named(key) === undefined) merged.runtime.requestKeys[key] = false;
     }
+  }
+  // The built-in clients hand the answer over as the client gives it: nothing
+  // unwraps an envelope at run time. `@mrzr/api-client` itself takes the `data`
+  // of a `{ data }` answer, so the types speak of `data` there; with any other
+  // client the type is the whole answer.
+  if (merged.client === "builtin") {
+    if (named("envelope") === undefined) merged.runtime.requestKeys.envelope = false;
+    const own = cliOptions.runtime?.envelope ?? fileConfig.runtime?.envelope;
+    if (merged.http !== "api-client" && own === undefined) merged.runtime.envelope = false;
   }
   // `@mrzr/api-client`'s `delete` takes no body, so a DELETE with one is left out.
   if (merged.client === "builtin" && merged.http === "api-client") {

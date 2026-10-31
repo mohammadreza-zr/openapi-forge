@@ -2,7 +2,12 @@
 // bed. Usage: node --import dom.mjs bundle.mjs <port>. Exits non-zero on failure.
 import "@angular/compiler";
 import assert from "node:assert/strict";
-import { HttpClient, provideHttpClient, withFetch } from "@angular/common/http";
+import {
+  HttpClient,
+  provideHttpClient,
+  withFetch,
+  withInterceptors,
+} from "@angular/common/http";
 import { inject, provideZonelessChangeDetection, signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import {
@@ -13,12 +18,13 @@ import {
   QueryClient,
   provideTanStackQuery,
 } from "@tanstack/angular-query-experimental";
-import { configureClient } from "@api/client";
+import * as clientModule from "@api/client";
+import { payloadOf, pointClient } from "./point.cjs";
 import * as pets from "@api/pets";
 
 const [port, http] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
-configureClient({ baseUrl: `${base}/api/v1` });
+pointClient(http, clientModule, require, `${base}/api/v1`);
 
 const asked = (): Promise<string[]> =>
   fetch(`${base}/asked`).then((response) => response.json());
@@ -42,48 +48,44 @@ async function main() {
     providers: [
       provideZonelessChangeDetection(),
       provideTanStackQuery(client),
-      ...(http === "angular" ? [provideHttpClient(withFetch())] : []),
+      ...(http === "angular" ? [provideHttpClient(
+          withFetch(),
+          withInterceptors([(request, next) => next(request.clone({ url: `${base}/api/v1${request.url}` }))]),
+        )] : []),
     ],
   });
   // The Angular HTTP client sends through the app's own HttpClient.
   if (http === "angular") {
-    configureClient({
+    clientModule.configureClient({
       instance: TestBed.runInInjectionContext(() => inject(HttpClient)),
     });
   }
 
   const id = signal("1");
-  const later = signal<string | undefined>(undefined);
-  const { query, waiting, mutation } = TestBed.runInInjectionContext(() => ({
+  const { query, mutation } = TestBed.runInInjectionContext(() => ({
     query: pets.injectGetPetQuery(id),
-    waiting: pets.injectGetPetQuery(later),
     mutation: pets.injectCreatePetMutation(),
   }));
 
-  await until(() => query.data()?.id === "1", "pet 1");
+  await until(() => payloadOf(http, query.data())?.id === "1", "pet 1");
   id.set("2");
-  await until(() => query.data()?.id === "2", "pet 2");
+  await until(() => payloadOf(http, query.data())?.id === "2", "pet 2");
   const seen = await asked();
   assert.ok(
     seen.includes("GET /api/v1/pets/1") && seen.includes("GET /api/v1/pets/2"),
     seen.join(", "),
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.ok(
-    !(await asked()).some((line) => line.includes("undefined")),
-    "asked for /pets/undefined",
-  );
-  assert.equal(waiting.fetchStatus(), "idle");
-  later.set("8");
-  await until(() => waiting.data()?.id === "8", "pet 8");
-
   const created = await mutation.mutateAsync({ body: { name: "Rex" } });
-  assert.deepEqual(created, { id: "new", name: "Rex" });
+  assert.deepEqual(payloadOf(http, created), { id: "new", name: "Rex" });
 
   // Destroying the injector aborts a request still in flight.
   const pending = mutation.mutateAsync({ body: { name: "slow" } });
-  const settled = assert.rejects(pending, /abort|cancel/i);
+  // @mrzr/api-client settles a canceled call with no data instead of rejecting.
+  const settled =
+    http === "api-client"
+      ? pending.then(() => undefined)
+      : assert.rejects(pending, /abort|cancel/i);
   await new Promise((resolve) => setTimeout(resolve, 50));
   TestBed.resetTestingModule();
   await settled;

@@ -4,7 +4,9 @@ import { test } from "node:test";
 import { emit } from "../dist/emit.js";
 import { options, petstore } from "./helpers.mjs";
 
-const run = (patch) => emit(petstore(), options(patch), "petstore.yaml");
+// The product's default client is called straight on the client, with its own answer type.
+const run = (patch) =>
+  emit(petstore(), options({ http: "api-client", ...patch }), "petstore.yaml");
 
 test("one module per tag, plus models, services and index", () => {
   const { files, operations, tags } = run();
@@ -21,16 +23,19 @@ test("one module per tag, plus models, services and index", () => {
 
 test("routes lose the api prefix and are written once", () => {
   const pets = run().files.get("pets.ts");
-  assert.match(pets, /listPets: "\/pets"/);
-  assert.match(pets, /getPet: "\/pets\/\{pet_id\}"/);
-  // The request reads its route from the map, not a copy of it.
-  assert.match(pets, /apiGet<Pet>\(\s*petsEndpoints\.getPet,/);
+  // The route is written in the tag's `Endpoints` map; the request function reads it from there.
+  assert.match(pets, /export const petsEndpoints = \{/);
+  assert.match(pets, /getPet: "\/pets\/\{pet_id\}",/);
+  assert.match(pets, /listPets: "\/pets",/);
+  assert.match(pets, /apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,/);
+  assert.match(pets, /apiClient\.get<ApiListData<Pet>>\(\s*petsEndpoints\.listPets,/);
+  assert.equal(pets.match(/"\/pets\/\{pet_id\}\/photo"/g)?.length, 1);
 });
 
 test("the envelope is unwrapped and a { count, list } answer is a list type", () => {
   const files = run().files;
-  assert.match(files.get("pets.ts"), /apiGet<ApiListData<Pet>>/);
-  assert.match(files.get("pets.ts"), /apiPost<Pet>/);
+  assert.match(files.get("pets.ts"), /apiClient\.get<ApiListData<Pet>>/);
+  assert.match(files.get("pets.ts"), /apiClient\.post<Pet>/);
   assert.match(files.get("models.ts"), /export type PetEnvelope = ApiEnvelope<Pet>;/);
   assert.doesNotMatch(files.get("models.ts"), /EnvelopeBase/);
 });
@@ -44,8 +49,10 @@ test("read operations get keys and query hooks, writes get mutation hooks", () =
   assert.match(pets, /@deprecated/);
 });
 
-test("a detail query waits for its id", () => {
-  assert.match(run().files.get("pets.ts"), /enabled: petId !== undefined,/);
+test("a detail query takes its id as it is: no undefined, no guard", () => {
+  const pets = run().files.get("pets.ts");
+  assert.match(pets, /useGetPetQuery\(\s*petId: string,/);
+  assert.doesNotMatch(pets, /petId!|petId \?\? |enabled: petId/);
 });
 
 test("target requests emits functions only", () => {
@@ -56,9 +63,13 @@ test("target requests emits functions only", () => {
 });
 
 test("a multipart body is sent as form data and typed as a Blob", () => {
-  const files = run().files;
-  assert.match(files.get("pets.ts"), /isFormData: true/);
-  assert.match(files.get("models.ts"), /file\?: Blob;/);
+  // Through a request function the client is told; @mrzr/api-client sees the FormData itself.
+  const fetched = run({ http: "fetch" }).files;
+  assert.match(fetched.get("pets.ts"), /isFormData: true/);
+  assert.match(fetched.get("models.ts"), /file\?: Blob;/);
+  const pets = run().files.get("pets.ts");
+  assert.doesNotMatch(pets, /isFormData/);
+  assert.match(pets, /body\?: FormData/);
 });
 
 test("tags can be included or excluded", () => {
@@ -86,7 +97,7 @@ test("envelope and list handling can be switched off", () => {
     "pets.ts",
   );
   assert.doesNotMatch(pets, /ApiListData/);
-  assert.match(pets, /apiPost<PetEnvelope>/);
+  assert.match(pets, /\.post<PetEnvelope>/);
 });
 
 test("transform hooks rename, rewrite and drop", () => {
@@ -130,9 +141,9 @@ test("Go-style schema names become identifiers and every $ref follows", () => {
   delete spec.components.schemas.Pet;
   spec.components.schemas.PetEnvelope.allOf[1].properties.data.$ref =
     "#/components/schemas/handler.Pet";
-  const { files } = emit(spec, options(), "x");
+  const { files } = emit(spec, options({ http: "api-client" }), "x");
   assert.match(files.get("models.ts"), /export type HandlerPet = \{/);
-  assert.match(files.get("pets.ts"), /apiPost<HandlerPet>/);
+  assert.match(files.get("pets.ts"), /\.post<HandlerPet>/);
 });
 
 test("an operationId used twice gets the method appended, and a number only if that is taken too", () => {
@@ -213,4 +224,94 @@ test("a schema named with a leading digit gets a valid type and validator name",
   const { files } = emit(doc, options({ zod: true }), "t.yaml");
   assert.match(files.get("models.ts"), /export type _2FA = \{/);
   assert.match(files.get("schemas.ts"), /export const _2FASchema: z\.ZodType<_2FA>/);
+});
+
+test("write variables that differ only by an aliased header type are one type", () => {
+  const header = { name: "Accept-Language", in: "header", schema: { type: "string" } };
+  const write = (operationId) => ({
+    operationId,
+    parameters: [header],
+    requestBody: {
+      required: true,
+      content: { "application/json": { schema: { $ref: "#/components/schemas/Ref" } } },
+    },
+    responses: { 200: { description: "ok" } },
+  });
+  const doc = {
+    openapi: "3.0.3",
+    info: { title: "t", version: "1" },
+    paths: {
+      "/a": { post: write("removeUser") },
+      "/b": { post: write("revokeUser") },
+    },
+    components: { schemas: { Ref: { type: "object", properties: { id: { type: "string" } } } } },
+  };
+  const { files } = emit(doc, options(), "t.yaml");
+  const source = files.get("default.ts");
+  assert.match(source, /export type RevokeUserHeaders = RemoveUserHeaders;/);
+  assert.match(source, /export type RevokeUserVariables = RemoveUserVariables;/);
+});
+
+// ── which identical models become one ───────────────────────────────────────
+
+const shaped = (schemas, answers) => ({
+  openapi: "3.0.3",
+  info: { title: "t", version: "1" },
+  paths: Object.fromEntries(
+    Object.entries(answers).map(([path, schema]) => [
+      path,
+      {
+        get: {
+          operationId: path.slice(1),
+          responses: { 200: { description: "ok", content: { "application/json": { schema } } } },
+        },
+      },
+    ]),
+  ),
+  components: { schemas },
+});
+const fields = (...names) => ({
+  type: "object",
+  properties: Object.fromEntries(names.map((name) => [name, { type: "string" }])),
+});
+
+test("two schemas the document names stay two types, whatever their shape", () => {
+  const doc = shaped(
+    { AccountBody: fields("a", "b", "c", "d"), AdminEditBody: fields("a", "b", "c", "d") },
+    { "/one": { $ref: "#/components/schemas/AccountBody" }, "/two": { $ref: "#/components/schemas/AdminEditBody" } },
+  );
+  const models = emit(doc, options(), "t.yaml").files.get("models.ts");
+  assert.match(models, /export type AccountBody = \{/);
+  assert.match(models, /export type AdminEditBody = \{/);
+});
+
+test("an inline object that says something of its own uses the schema it repeats", () => {
+  const doc = shaped(
+    { Page: fields("a", "b", "c") },
+    { "/page": fields("a", "b", "c") },
+  );
+  const models = emit(doc, options(), "t.yaml").files.get("models.ts");
+  assert.match(models, /export type Page = \{/);
+  assert.match(models, /export type PageResponse = Page;/);
+});
+
+test("a bare { id, name } is a coincidence, not one model", () => {
+  const doc = shaped(
+    { Tag: fields("id", "name") },
+    { "/one": fields("id", "name"), "/two": fields("id", "name") },
+  );
+  const models = emit(doc, options(), "t.yaml").files.get("models.ts");
+  assert.doesNotMatch(models, /export type \w+ = (Tag|OneResponse);/);
+  assert.match(models, /export type OneResponse = \{/);
+  assert.match(models, /export type TwoResponse = \{/);
+});
+
+test("a key is the tag, the operation's name and what its answer depends on", () => {
+  const pets = run().files.get("pets.ts");
+  assert.match(pets, /all: \["Pets"\] as const,/);
+  assert.match(pets, /listPets: \(params: ListPetsQuery\) =>\s*\[\.\.\.petsKeys\.all, "listPets", params\] as const,/);
+  assert.match(pets, /getPet: \(petId: string\) =>\s*\[\.\.\.petsKeys\.all, "getPet", petId\] as const,/);
+  // No route and no list / detail layer: the name already tells one read from another.
+  const keys = pets.slice(pets.indexOf("export const petsKeys"), pets.indexOf("} as const;", pets.indexOf("export const petsKeys")));
+  assert.doesNotMatch(keys, /\/pets|lists\(\)|details\(\)/);
 });

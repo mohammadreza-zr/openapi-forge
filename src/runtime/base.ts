@@ -1,9 +1,30 @@
+import type { HttpClientName } from "../types.js";
+
 // The part of the built-in runtime every library shares: the banner and the
 // types of `types.ts` that do not name a data-fetching library.
 export const BANNER =
   "/* Written once by openapi-forge. Edit freely — it is never overwritten. */";
 
-export const TYPES_BASE = `
+/** The error of the `fetch` client, which has none of its own. */
+const RESPONSE_ERROR = `
+/** Thrown by the \`fetch\` client on a non-2xx status — fetch itself resolves on any status. */
+export class ApiResponseError extends Error {
+  readonly status: number;
+  readonly body?: unknown;
+
+  constructor(message: string, options: { status: number; body?: unknown }) {
+    super(message);
+    this.name = "ApiResponseError";
+    this.status = options.status;
+    this.body = options.body;
+  }
+}
+`;
+
+/** The types every library's `types.ts` shares; `http` decides whether it also holds the error class. */
+export const typesBase = (http: HttpClientName): string => TYPES_BASE + (http === "fetch" ? RESPONSE_ERROR : "");
+
+const TYPES_BASE = `
 /** What every answer of the API is wrapped in. */
 export type ApiEnvelope<T> = {
   result: boolean;
@@ -18,24 +39,6 @@ export type ApiListData<T> = {
   list: T[];
 };
 
-/** Thrown when the API answers \`result: false\` or a non-2xx status. */
-export class ApiResponseError extends Error {
-  readonly status: number;
-  readonly code?: number;
-  readonly body?: unknown;
-
-  constructor(
-    message: string,
-    options: { status: number; code?: number; body?: unknown },
-  ) {
-    super(message);
-    this.name = "ApiResponseError";
-    this.status = options.status;
-    this.code = options.code;
-    this.body = options.body;
-  }
-}
-
 /** What a generated request function takes beside its own arguments. */
 export type GeneratedRequestConfig<T = unknown> = {
   signal?: AbortSignal;
@@ -47,8 +50,8 @@ export type GeneratedRequestConfig<T = unknown> = {
   addTemplateToUrl?: Record<string, unknown>;
   /** Send the body as multipart form data: a list is a part per item, an object a JSON part. */
   isFormData?: boolean;
-  /** The answer is wrapped in \`{ result, data, … }\`: \`data\` is the payload and \`result: false\` throws. */
-  isEnvelope?: boolean;
+  /** How the client should read an answer that is not JSON: as text or as bytes (a Blob). */
+  responseType?: "text" | "blob";
   /** The body of a \`DELETE\`, which has no body argument of its own. */
   body?: unknown;
   /** Prepended to the route; falls back to the client's default. */

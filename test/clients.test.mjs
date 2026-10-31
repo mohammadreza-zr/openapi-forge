@@ -14,7 +14,7 @@ import { LIBRARIES, LIBRARY_NAMES } from "../dist/runtime/libraries/index.js";
 import { clients, options } from "./helpers.mjs";
 
 const build = (patch) =>
-  emit(clients(), options({ infinite: true, ...patch }), "x").files;
+  emit(clients(), options({ infinite: true, http: "api-client", ...patch }), "x").files;
 
 test("every library names its hooks with its own prefix", () => {
   for (const library of LIBRARY_NAMES) {
@@ -63,7 +63,7 @@ test("a runtime name set in the config wins over the library's", () => {
 test("react and swr hooks take plain arguments", () => {
   for (const library of ["react-query", "swr"]) {
     const pets = build({ library }).get("pets.ts");
-    assert.match(pets, /useGetPetQuery\(petId: string \| undefined, options\?/);
+    assert.match(pets, /useGetPetQuery\(petId: string, options\?/);
     assert.doesNotMatch(pets, /toValue|MaybeGetter/);
   }
 });
@@ -80,21 +80,17 @@ test("reactive libraries read each argument where the request is made", () => {
     assert.match(
       pets,
       new RegExp(
-        `${prefix}ListVisitsQuery\\(\\s*petId: MaybeGetter<string \\| undefined>,\\s*query: MaybeGetter<ListVisitsQuery>,`,
+        `${prefix}ListVisitsQuery\\(\\s*petId: MaybeGetter<string>,\\s*query: MaybeGetter<ListVisitsQuery>,`,
       ),
       library,
     );
     assert.match(
       pets,
-      /\(\) => petsKeys\.listVisits\(toValue\(petId\) \?\? "", toValue\(query\)\)/,
+      /\(\) => petsKeys\.listVisits\(toValue\(petId\), toValue\(query\)\)/,
     );
     assert.match(
       pets,
-      /\(signal\) => listVisits\(toValue\(petId\)!, toValue\(query\), \{ signal \}\)/,
-    );
-    assert.match(
-      pets,
-      /\(\) => \[toValue\(petId\)\]\.every\(\(value\) => value !== undefined && !Number\.isNaN\(value\)\)/,
+      /\(signal\) => listVisits\(toValue\(petId\), toValue\(query\), \{ signal \}\)/,
     );
     assert.match(
       pets,
@@ -123,7 +119,7 @@ test("a mutation's variables are never reactive", () => {
   const pets = build({ library: "vue-query" }).get("pets.ts");
   assert.match(
     pets,
-    /useCreatePetMutation\(\s*options\?: ApiMutationOptions<Pet, CreatePetVariables>/,
+    /useCreatePetMutation\(\s*options\?: ApiMutationOptions<IRes<Pet>, CreatePetVariables>/,
   );
 });
 
@@ -193,56 +189,56 @@ test("http picks what the built-in client sends with; the default is @mrzr/api-c
   const axiosClient = runtimeFiles(resolveOptions({ http: "axios" })).get(
     "client.ts",
   );
-  assert.match(fetchClient, /await fetch\(url/);
+  assert.match(fetchClient, /await fetch\(/);
   assert.doesNotMatch(fetchClient, /axios/);
   assert.match(
     axiosClient,
     /import axios, \{ type AxiosInstance \} from "axios"/,
   );
   assert.match(axiosClient, /instance: axios\.create\(\)/);
-  assert.match(axiosClient, /validateStatus: \(\) => true/);
   assert.doesNotMatch(axiosClient, /await fetch\(/);
 });
 
-test("every client builds the request and judges the answer the same way", () => {
-  // Everything but the transport's own functions: before them, and `request`.
-  const shared = (text) => {
-    const own = ["function readBody", "async function send"]
-      .map((marker) => text.indexOf(marker))
-      .filter((at) => at !== -1);
-    return (
-      text.slice(text.indexOf("function buildUrl"), Math.min(...own)) +
-      text.slice(text.indexOf("async function request"))
-    );
-  };
+test("no client but fetch reads or judges an answer: it is the client's own", () => {
   const clientOf = (http) =>
     runtimeFiles(resolveOptions({ http })).get("client.ts");
-  for (const http of HTTP_CLIENTS)
-    assert.equal(shared(clientOf(http)), shared(clientOf("fetch")), http);
+  const typesOf = (http) =>
+    runtimeFiles(resolveOptions({ http })).get("types.ts");
+  for (const http of ["axios", "angular", "api-client"]) {
+    const client = clientOf(http);
+    assert.doesNotMatch(client, /readBody|ApiResponseError|function unwrap|arraybuffer/i, http);
+    assert.doesNotMatch(client, /validateStatus|throwError|isEnvelope/, http);
+    assert.doesNotMatch(typesOf(http), /ApiResponseError/, http);
+  }
+  // fetch resolves on any status and parses nothing, so it has to do both.
+  assert.match(clientOf("fetch"), /function readBody/);
+  assert.match(typesOf("fetch"), /class ApiResponseError/);
+});
+
+test("axios gets what the document asks for and returns its answer; api-client is called straight", () => {
+  const axiosClient = runtimeFiles(resolveOptions({ http: "axios" })).get("client.ts");
+  assert.match(axiosClient, /settings\.instance\.request<T>\(/);
+  assert.match(axiosClient, /return response\.data;/);
+  // @mrzr/api-client has no wrapper: the generated functions call it, with its own config and answer.
+  const apiClient = runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts");
+  assert.doesNotMatch(apiClient, /async function request|apiGet|GeneratedRequestConfig/);
+  const pets = build({}).get("pets.ts");
+  assert.match(pets, /apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*\{\s*\.\.\.config,\s*addTemplateToUrl: \{ pet_id: petId \}/);
+  assert.match(pets, /config\?: RequestConfig<Pet>/);
+  assert.match(pets, /import type \{[^}]*\bRequestConfig\b[^}]*\} from "@mrzr\/api-client"/);
 });
 
 test("the angular client sends through the HttpClient it is given", () => {
   const client = runtimeFiles(resolveOptions({ http: "angular" })).get(
     "client.ts",
   );
-  assert.match(
-    client,
-    /import \{ HttpClient, HttpErrorResponse \} from "@angular\/common\/http"/,
-  );
+  assert.match(client, /import \{ HttpClient \} from "@angular\/common\/http"/);
   assert.match(client, /instance\?: HttpClient/);
   assert.match(
     client,
     /configureClient\(\{ instance: inject\(HttpClient\) \}\)/,
   );
   assert.doesNotMatch(client, /await fetch\(|axios/);
-});
-
-test("every client hands back bytes and reads them the same way", () => {
-  for (const http of HTTP_CLIENTS) {
-    const client = runtimeFiles(resolveOptions({ http })).get("client.ts");
-    assert.equal(client.match(/function readBody/g)?.length, 1, http);
-    assert.match(client, /bytes:/, http);
-  }
 });
 
 test("an unknown library or http client is named", () => {
@@ -342,9 +338,23 @@ test("api-client's delete takes no body, so a DELETE with one is left out and th
   );
 });
 
-test("the api-client client holds a configurable instance and judges the answer like the others", () => {
+test("the api-client client is one line the project edits: its own client, nothing to configure", () => {
   const client = runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts");
-  assert.match(client, /import \{ type ApiClient, createClient \} from "@mrzr\/api-client"/);
-  assert.match(client, /instance: ApiClient/);
-  assert.match(client, /createClient\(\{ baseUrl: "", worker: false \}\)/);
+  assert.match(client, /import \{ createClient \} from "@mrzr\/api-client"/);
+  assert.doesNotMatch(client, /configureClient/);
+  // The placeholder instance has the client's own defaults: no option of ours (worker, baseUrl, …).
+  assert.match(client, /export const apiClient = createClient\(\);/);
+});
+
+test("no built-in client sets an option that changes how its client behaves", () => {
+  // The rule in CLAUDE.md: the clients are used as they are. These are the
+  // options that would make one client act like another.
+  const forbidden =
+    /validateStatus|throwError|throwOnCancel|stringifyBody|fullData|worker:|arraybuffer|arrayBuffer|observe:|withCredentials|credentials:|timeout|retry/;
+  for (const http of ["axios", "angular", "api-client"])
+    assert.doesNotMatch(
+      runtimeFiles(resolveOptions({ http })).get("client.ts").replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, ""),
+      forbidden,
+      http,
+    );
 });

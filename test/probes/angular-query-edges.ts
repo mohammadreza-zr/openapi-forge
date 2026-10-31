@@ -4,7 +4,12 @@
 // its header with every page.
 import "@angular/compiler";
 import assert from "node:assert/strict";
-import { HttpClient, provideHttpClient, withFetch } from "@angular/common/http";
+import {
+  HttpClient,
+  provideHttpClient,
+  withFetch,
+  withInterceptors,
+} from "@angular/common/http";
 import { inject, provideZonelessChangeDetection, signal } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import {
@@ -15,12 +20,13 @@ import {
   QueryClient,
   provideTanStackQuery,
 } from "@tanstack/angular-query-experimental";
-import { configureClient } from "@api/client";
+import * as clientModule from "@api/client";
+import { pointClient } from "./point.cjs";
 import * as edges from "@api/edges";
 
 const [port, http] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
-configureClient({ baseUrl: `${base}/api/v1` });
+pointClient(http, clientModule, require, `${base}/api/v1`);
 
 type Seen = { url: string; headers: Record<string, string> }[];
 const seen = (): Promise<Seen> =>
@@ -47,12 +53,15 @@ async function main() {
     providers: [
       provideZonelessChangeDetection(),
       provideTanStackQuery(client),
-      ...(http === "angular" ? [provideHttpClient(withFetch())] : []),
+      ...(http === "angular" ? [provideHttpClient(
+          withFetch(),
+          withInterceptors([(request, next) => next(request.clone({ url: `${base}/api/v1${request.url}` }))]),
+        )] : []),
     ],
   });
   // The Angular HTTP client sends through the app's own HttpClient.
   if (http === "angular") {
-    configureClient({
+    clientModule.configureClient({
       instance: TestBed.runInInjectionContext(() => inject(HttpClient)),
     });
   }

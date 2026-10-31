@@ -5,7 +5,12 @@
 // Usage: node --import dom.mjs bundle.mjs <port>.
 import "@angular/compiler";
 import assert from "node:assert/strict";
-import { HttpClient, provideHttpClient, withFetch } from "@angular/common/http";
+import {
+  HttpClient,
+  provideHttpClient,
+  withFetch,
+  withInterceptors,
+} from "@angular/common/http";
 import { inject, provideZonelessChangeDetection } from "@angular/core";
 import { TestBed } from "@angular/core/testing";
 import {
@@ -22,10 +27,18 @@ const asked = (): Promise<{ url: string; headers: Record<string, string>; body: 
 async function main() {
   TestBed.initTestEnvironment(BrowserTestingModule, platformBrowserTesting());
   TestBed.configureTestingModule({
-    providers: [provideZonelessChangeDetection(), provideHttpClient(withFetch())],
+    providers: [
+      provideZonelessChangeDetection(),
+      provideHttpClient(
+        withFetch(),
+        withInterceptors([
+          (request, next) =>
+            next(request.clone({ url: `http://127.0.0.1:${port}/api/v1${request.url}` })),
+        ]),
+      ),
+    ],
   });
   configureClient({
-    baseUrl: `http://127.0.0.1:${port}/api/v1`,
     instance: TestBed.runInInjectionContext(() => inject(HttpClient)),
   });
 

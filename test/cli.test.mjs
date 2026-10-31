@@ -33,7 +33,7 @@ test("the runtime is written once and never overwritten", async () => {
   forge(dir, "--input", "openapi.yaml", "--out", "api", "--raw");
   assert.equal(await readFile(join(dir, "api", "client.ts"), "utf8"), "// mine\n");
   forge(dir, "--input", "openapi.yaml", "--out", "api", "--raw", "--force-runtime");
-  assert.match(await readFile(join(dir, "api", "client.ts"), "utf8"), /apiGet/);
+  assert.match(await readFile(join(dir, "api", "client.ts"), "utf8"), /apiClient/);
 });
 
 test("--check passes on fresh output and fails on stale output", async () => {
@@ -88,7 +88,7 @@ test("a folder of documents is merged as services", async () => {
   );
   const result = forge(dir, "--input", "specs", "--out", "api", "--api-prefix", "/api/v1", "--raw");
   assert.equal(result.status, 0, result.stderr);
-  assert.match(await readFile(join(dir, "api", "ping.ts"), "utf8"), /apiGet/);
+  assert.match(await readFile(join(dir, "api", "ping.ts"), "utf8"), /apiClient/);
   assert.match(await readFile(join(dir, "api", "services.ts"), "utf8"), /"other"/);
 });
 

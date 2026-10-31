@@ -3,12 +3,13 @@
 import assert from "node:assert/strict";
 import { flushSync, mount, unmount } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
-import { configureClient } from "@api/client";
+import * as clientModule from "@api/client";
+import { payloadOf, pointClient } from "./point.cjs";
 import Probe from "./Probe.svelte";
 
-const [port] = process.argv.slice(2);
+const [port, http] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
-configureClient({ baseUrl: `${base}/api/v1` });
+pointClient(http, clientModule, require, `${base}/api/v1`);
 
 const asked = () => fetch(`${base}/asked`).then((response) => response.json());
 async function until(check, what) {
@@ -33,30 +34,25 @@ async function main() {
   });
   flushSync();
 
-  await until(() => handle.query.data?.id === "1", "pet 1");
+  await until(() => payloadOf(http, handle.query.data)?.id === "1", "pet 1");
   handle.setId("2");
-  await until(() => handle.query.data?.id === "2", "pet 2");
+  await until(() => payloadOf(http, handle.query.data)?.id === "2", "pet 2");
   const seen = await asked();
   assert.ok(
     seen.includes("GET /api/v1/pets/1") && seen.includes("GET /api/v1/pets/2"),
     seen.join(", "),
   );
 
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.ok(
-    !(await asked()).some((line) => line.includes("undefined")),
-    "asked for /pets/undefined",
-  );
-  assert.equal(handle.waiting.fetchStatus, "idle");
-  handle.setLater("8");
-  await until(() => handle.waiting.data?.id === "8", "pet 8");
-
   const created = await handle.mutation.mutateAsync({ body: { name: "Rex" } });
-  assert.deepEqual(created, { id: "new", name: "Rex" });
+  assert.deepEqual(payloadOf(http, created), { id: "new", name: "Rex" });
 
   // Destroying the component aborts a request still in flight (fetch says "aborted", axios "canceled").
   const pending = handle.mutation.mutateAsync({ body: { name: "slow" } });
-  const settled = assert.rejects(pending, /abort|cancel/i);
+  // @mrzr/api-client settles a canceled call with no data instead of rejecting.
+  const settled =
+    http === "api-client"
+      ? pending.then(() => undefined)
+      : assert.rejects(pending, /abort|cancel/i);
   await new Promise((resolve) => setTimeout(resolve, 50));
   unmount(component);
   await settled;

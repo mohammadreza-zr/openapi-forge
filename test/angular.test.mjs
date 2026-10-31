@@ -9,7 +9,7 @@ import { bundle, generateTo, root } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
 import { edgesApi, petApi, serve } from "./server.mjs";
 
-for (const http of ["fetch", "axios", "angular", "api-client"]) test(`angular-query hooks follow a signal, wait for a missing id and stop with their injector over ${http}`, async () => {
+for (const http of ["fetch", "axios", "angular", "api-client"]) test(`angular-query hooks follow a signal and stop with their injector over ${http}`, async () => {
   const dir = await generateTo(`angular-${http}`, { library: "angular-query", http });
   const entry = await bundle(dir, join(root, "test/probes/angular.ts"));
   const server = await serve(petApi);
@@ -36,7 +36,8 @@ for (const http of ["fetch", "axios", "angular", "api-client"]) test(`angular-qu
   }
 });
 
-for (const http of ["fetch", "axios", "angular", "api-client"]) test(`angular-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
+// The client's headers are its own: the api-client functions take none as an argument.
+for (const http of ["fetch", "axios", "angular"]) test(`angular-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
   const dir = await generateTo(`angular-edges-query-${http}`, {
     library: "angular-query",
     http,

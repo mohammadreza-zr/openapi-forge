@@ -73,25 +73,34 @@ function deriveFrom(
 
 export function shareIdenticalTypes(
   blocks: string[],
-  related: (a: string, b: string) => boolean = () => true,
+  related: (a: string, b: string, shape: string) => boolean = () => true,
   derive = false,
 ): string[] {
   // Types with the same shape are written once; the later ones alias the
   // first, so a field added to the backend lands in a single place. Doc
   // comments are not part of the shape, and only types `related` says belong
-  // together are merged — two entities that merely look alike stay apart.
+  // together are merged (`related` gets both names and the shape) — two
+  // entities that merely look alike stay apart.
   // With `derive`, a type that differs from an earlier one in only a few
   // properties is written as that type with those properties changed.
   const owners = new Map<string, string[]>();
   const closest: Candidate[] = [];
+  // A name that became an alias stands for its owner when shapes are compared,
+  // so two types whose fields differ only by which alias they name are one.
+  const aliases = new Map<string, string>();
+  const canonical = (shape: string) =>
+    shape.replace(/\b[A-Za-z_$][\w$]*\b/g, (word) => aliases.get(word) ?? word);
   return blocks.map((block) => {
     const match =
       /^((?:\/\*\*.*\*\/\n)?)export type (\w+) = (\{[\s\S]*\});$/.exec(block);
     if (!match) return block;
-    const shape = match[3].replace(/^\s*\/\*\*.*\*\/\n/gm, "");
+    const shape = canonical(match[3].replace(/^\s*\/\*\*.*\*\/\n/gm, ""));
     const names = owners.get(shape) ?? [];
-    const owner = names.find((name) => related(name, match[2]));
-    if (owner) return `${match[1]}export type ${match[2]} = ${owner};`;
+    const owner = names.find((name) => related(name, match[2], shape));
+    if (owner) {
+      aliases.set(match[2], owner);
+      return `${match[1]}export type ${match[2]} = ${owner};`;
+    }
 
     const props = derive ? parseObjectBody(match[3]) : null;
     if (props) {

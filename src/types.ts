@@ -154,6 +154,8 @@ export interface RuntimeConfig {
     envelope: string | false;
     /** Where the body of a DELETE goes (the transport's \`apiDelete\` takes no body argument); \`false\` skips such operations. */
     body: string | false;
+    /** Where the kind of a non-JSON answer goes (\`"text"\` or \`"blob"\`), for a transport that reads the answer as it is told to; \`false\` when it does not. */
+    responseType: string | false;
   };
   services: {
     module?: string;
@@ -182,6 +184,8 @@ export interface OperationInfo {
   /** The media type the body is sent as, e.g. \`application/json\`; \`null\` without a body. */
   bodyMediaType: string | null;
   responseSchema: Schema | null;
+  /** The media type of the success answer, e.g. \`application/octet-stream\`; \`null\` without a body. */
+  responseMediaType: string | null;
   service: string | null;
 }
 

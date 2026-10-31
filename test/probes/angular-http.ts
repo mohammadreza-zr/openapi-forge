@@ -4,7 +4,7 @@
 // Usage: node --import dom.mjs bundle.mjs <port> <other port>.
 import "@angular/compiler";
 import assert from "node:assert/strict";
-import { HttpClient } from "@angular/common/http";
+import { HttpClient, HttpErrorResponse } from "@angular/common/http";
 import {
   provideHttpClient,
   withFetch,
@@ -17,7 +17,6 @@ import {
   platformBrowserTesting,
 } from "@angular/platform-browser/testing";
 import { configureClient } from "@api/client";
-import { ApiResponseError } from "@api/types";
 import * as pets from "@api/pets";
 
 const [port, otherPort] = process.argv.slice(2);
@@ -33,8 +32,14 @@ async function main() {
       provideHttpClient(
         withFetch(),
         withInterceptors([
+          // The app's own base URL, as any Angular app puts it; a call that names its own is left alone.
           (request, next) =>
-            next(request.clone({ setHeaders: { "X-Interceptor": "ran" } })),
+            next(
+              request.clone({
+                url: request.url.startsWith("http") ? request.url : base + request.url,
+                setHeaders: { "X-Interceptor": "ran" },
+              }),
+            ),
         ]),
       ),
     ],
@@ -43,7 +48,6 @@ async function main() {
   // Before the client is given its HttpClient, a request says what is missing.
   await assert.rejects(pets.getPet("1"), /inject\(HttpClient\)/);
   configureClient({
-    baseUrl: base,
     instance: TestBed.runInInjectionContext(() => inject(HttpClient)),
   });
 
@@ -74,16 +78,17 @@ async function main() {
     "other",
   );
 
-  await assert.rejects(pets.getPet("fail"), (error: unknown) => {
-    assert.ok(error instanceof ApiResponseError);
-    assert.equal(error.code, 7);
-    assert.equal(error.message, "refused");
-    return true;
+  // An answer with result: false is the answer; HttpClient does not judge it.
+  assert.deepEqual(await pets.getPet("fail"), {
+    result: false,
+    code: 7,
+    message: "refused",
   });
+  // A failed status is HttpClient's own error, with the interceptors' say.
   await assert.rejects(pets.getPet("missing"), (error: unknown) => {
-    assert.ok(error instanceof ApiResponseError);
+    assert.ok(error instanceof HttpErrorResponse);
     assert.equal(error.status, 404);
-    assert.deepEqual(error.body, { detail: "no such pet" });
+    assert.deepEqual(error.error, { detail: "no such pet" });
     return true;
   });
 

@@ -36,23 +36,22 @@ The output is plain, readable TypeScript that is formatted with your own Prettie
 **Generated code**
 
 - **Models** — one `type` per schema: inline objects get names, `allOf` / `oneOf` / `anyOf`, `nullable`, enums, tuples (`prefixItems`), records (`additionalProperties`), `Blob` for uploads, circular references.
+- **Routes** — `<tag>Endpoints`, the one place each URL is written; the request functions read their route from it, so a path changes in a single line.
 - **Request functions** — one per operation, with typed path, query, header and body arguments, a `config` argument for `signal`, `baseUrl` and the like, and a JSDoc block (summary, description, `METHOD /route`, `@deprecated`).
-- **Routes written once** — a `<tag>Endpoints` map holds every URL; the request functions and the query keys both read it.
-- **Query-key factories** — `<tag>Keys` with `all`, `lists()`, `details()` and one key per read, so invalidating "everything of this tag" is one line.
+- **Query-key factories** — `<tag>Keys` with `all` and one key per read: the tag, the operation's name and the arguments its answer depends on (`["Pets", "getPet", "7"]`), so invalidating "everything of this tag" is one line and no route is spelled into a key.
 - **Hooks** for **React Query, Vue Query, Svelte Query, Solid Query, Angular Query or SWR**: a query hook per read, a mutation hook per write (or only plain request functions with `target: "requests"`).
 - **Reactive arguments** — in Vue, Svelte, Solid and Angular a hook argument may be a ref, a getter or a signal, and the query follows it.
-- **Safe detail reads** — a query whose path id is still `undefined` waits instead of asking for `/pets/undefined`.
 - **Zod validators** (`zod: true`) — `schemas.ts`, one validator per model, typed `z.ZodType<Model>` so the two cannot drift apart.
 - **Infinite-list hooks** (`infinite: true`) for paged reads.
-- **Shared types** — query and variable types with the same shape are written once (aliased, or `Omit<…> & { … }` when close); so are identical models with related names.
+- **Shared types** — query and variable types with the same shape are written once (aliased, or `Omit<…> & { … }` when close); an inline object that repeats a named model reuses it.
 
 **Transport**
 
-- **Four built-in HTTP clients** — [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (default), `fetch`, axios and Angular's `HttpClient` (interceptors keep working).
+- **Four built-in HTTP clients** — [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (default), `fetch`, axios and Angular's `HttpClient`. **Each one behaves as itself**: the answer, the errors and the interceptors are the client's own; the generator only gives it the request the document describes.
 - **Or your own** — `client: "custom"` imports your transport; every name and module path is configurable.
-- **Faithful encoding** — header parameters, repeated / bracketed query keys, path lists and objects, JSON, `multipart/form-data`, `application/x-www-form-urlencoded`, text and binary bodies, bodies on `DELETE`, answers read by `Content-Type` (JSON, text or `Blob`).
-- **Envelope handling** — `{ result, code, message, data }` answers are unwrapped per operation, `{ count, list }` becomes `ApiListData<T>`, failures throw an `ApiResponseError` with `status`, `code` and `body`.
-- **Cancellation** — queries, mutations and infinite lists pass an `AbortSignal` to the request (SWR cannot cancel, see below); an aborted request rejects.
+- **The request the document describes** — header parameters, repeated / bracketed query keys, path lists and objects, `multipart/form-data`, `application/x-www-form-urlencoded`, text and binary bodies, bodies on `DELETE`, and how a non-JSON answer should be read (`text` or `blob`).
+- **Types that match the client** — the type of an answer is what the chosen client returns. `@mrzr/api-client` is called straight and answers with its own `IRes<T>`, whose `data` is the payload (it takes the `data` of a `{ data }` answer itself, so a `{ result, data }` envelope is typed as its `data`); with the other clients the whole answer is typed. `{ count, list }` becomes `ApiListData<T>`.
+- **Cancellation** — queries, mutations and infinite lists pass an `AbortSignal` to the request (SWR cannot cancel, see below); what an aborted call does is the client's own.
 
 **Input**
 
@@ -83,20 +82,21 @@ With the default `client: "builtin"` three small files are written **once** next
 `@tanstack/react-query` v5 by default, see [Hook libraries](#hook-libraries).
 
 ```ts
-import { createClient } from "@mrzr/api-client";
-import { configureClient } from "./api/generated/client";
+// src/api/generated/client.ts — written once, yours to edit. The default client is @mrzr/api-client:
+// give it the base URL, the tokens and the plugins it needs.
+export const apiClient = createClient({ baseUrl: "https://api.example.com/v1" });
+```
+
+```ts
 import { useListPetsQuery, useCreatePetMutation } from "./api/generated";
 
-// The default client sends with @mrzr/api-client: the instance holds the base URL, the tokens and the plugins.
-configureClient({ instance: createClient({ baseUrl: "https://api.example.com/v1" }) });
-
-const pets = useListPetsQuery({ kind: "cat" });
+const pets = useListPetsQuery({ kind: "cat" });   // pets.data is api-client's own answer: pets.data?.data is the list
 const create = useCreatePetMutation();
 create.mutate({ body: { name: "Tom" } });
 ```
 
-Without `@mrzr/api-client`, pick another client (`http: "fetch"` needs nothing installed) and configure it with
-`configureClient({ baseUrl, headers: () => ({ Authorization: … }) })`.
+Without `@mrzr/api-client`, pick another client: `http: "fetch"` needs nothing installed and takes
+`configureClient({ baseUrl, headers: () => ({ Authorization: … }) })`; axios and Angular take their own instance (see [HTTP clients](#http-clients)).
 
 ## What is generated
 
@@ -116,14 +116,10 @@ src/api/generated/
 A module (trimmed) looks like this:
 
 ```ts
-export const petsEndpoints = { listPets: "/pets", getPet: "/pets/{pet_id}" } as const;
-
 export const petsKeys = {
   all: ["Pets"] as const,
-  lists: () => [...petsKeys.all, "list"] as const,
-  details: () => [...petsKeys.all, "detail"] as const,
-  listPets: (params: ListPetsQuery) => [...petsKeys.lists(), petsEndpoints.listPets, params] as const,
-  getPet: (petId: string) => [...petsKeys.details(), petsEndpoints.getPet, petId] as const,
+  listPets: (params: ListPetsQuery) => [...petsKeys.all, "listPets", params] as const,
+  getPet: (petId: string) => [...petsKeys.all, "getPet", petId] as const,
 } as const;
 
 export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string[] };
@@ -132,7 +128,7 @@ export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string
 export function listPets(query: ListPetsQuery = {}, config?: GeneratedRequestConfig<ApiListData<Pet>>) { … }
 
 export function useListPetsQuery(query: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
-export function useGetPetQuery(petId: string | undefined, options?: ApiQueryOptions<…>) { … }
+export function useGetPetQuery(petId: string, options?: ApiQueryOptions<…>) { … }
 export function useCreatePetMutation(options?: ApiMutationOptions<Pet, CreatePetVariables>) { … }
 ```
 
@@ -169,7 +165,7 @@ const pet = useGetPetQuery(id);            // Vue: refetches when `id.value` cha
 const pet = createGetPetQuery(() => id()); // Solid / Svelte / Angular: a getter
 ```
 
-A path id that is still `undefined` makes the query wait instead of asking for `/pets/undefined`. Mutations take their variables when `mutate` is called, so they are the same in every library.
+A query takes its path id as it is, a plain `string`. To hold a query back until you have the id, set `enabled` in the hook options. Mutations take their variables when `mutate` is called, so they are the same in every library.
 
 Notes that follow from what each library offers:
 
@@ -179,17 +175,23 @@ Notes that follow from what each library offers:
 
 ## HTTP clients
 
-| `http` | sends with | needs |
-| --- | --- | --- |
-| `api-client` (default) | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client): token refresh, tab sync, plugins; `configureClient({ instance: createClient({ … }) })` | `@mrzr/api-client` |
-| `fetch` | the platform's `fetch` | nothing |
-| `axios` | an axios instance, `configureClient({ instance })` | `axios` |
-| `angular` | Angular's `HttpClient`, so its interceptors apply; `configureClient({ instance: inject(HttpClient) })` at start-up | `@angular/common`, `rxjs` |
+| `http` | sends with | `configureClient` | needs |
+| --- | --- | --- | --- |
+| `api-client` (default) | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client): token refresh, tab sync, plugins | none: edit the `createClient()` line of `client.ts` | `@mrzr/api-client` |
+| `fetch` | the platform's `fetch` | `{ baseUrl, headers }` | nothing |
+| `axios` | an axios instance | `{ instance }` | `axios` |
+| `angular` | Angular's `HttpClient`, so its interceptors apply (the base URL goes in an interceptor, as in any Angular app) | `{ instance: inject(HttpClient) }` at start-up | `@angular/common`, `rxjs` |
 
-- With `axios`, `angular` and `api-client` the instance is `configureClient({ instance })`; interceptors, plugins, tokens and defaults live there. The URL, the body and the answer are handled by the same code as the `fetch` client, so all four behave alike.
-- An aborted request rejects in every client, but with the client's own error: `AbortError` for `fetch`, `CanceledError` for axios (`axios.isCancel`).
-- With the axios, Angular and api-client clients the answer reaches interceptors as bytes (an `ArrayBuffer`), because it is read by content type afterwards, the same way for every client.
-- `configureClient({ baseUrl, headers })` — a default base URL and a function that returns headers (sync or async), for every client. A single call may override `baseUrl` through its `config` argument.
+**The client is the client's.** `client.ts` only turns a generated call into the client's own request and returns what the client returns:
+
+- **axios** answers like axios: its parsing, its interceptors (they see the parsed answer), an `AxiosError` on a failed status, its base URL and defaults on the instance. The result is `response.data`.
+- **Angular** answers like `HttpClient`: its parsing, its interceptors, an `HttpErrorResponse` on a failed status. The result is the body.
+- **api-client** is called straight: there is no wrapper in `client.ts`, each generated function calls `apiClient.get(…)` / `.post(…)` with api-client's own `RequestConfig`, and what it returns is api-client's own `IRes<T>` (`data`, `statusCode`, `status`, `message`, `errors`, `headers`, …). A failed status is its `ApiError` (its `throwError`, on by default); a canceled call settles with `canceled: true` unless you set it to throw. `client.ts` is one line, `export const apiClient = createClient();`, in the file you own — give it the base URL, tokens and plugins there. A header parameter is not an argument of these functions either: headers are api-client's own (`createClient({ headers })` for every request, `headers` in the config of one call). A `multipart/form-data` body is typed `FormData` and a form body `URLSearchParams` — the bodies api-client sends as they are — so you build them yourself.
+- **fetch** has no behaviour of its own to keep: `fetch` resolves on any status and parses nothing, so `client.ts` reads the answer by its `Content-Type` (JSON, text, or a `Blob`) and rejects a failed status with an `ApiResponseError` (`status`, `body`).
+
+What the generator does decide, from the document, is the request: the filled-in route, the query string (lists repeat the key, objects are `a[b]=1`), the headers, a multipart or form-encoded body, and, for an answer that is not JSON, whether it is read as `text` or as a `Blob` (the `responseType` of the call). An aborted request ends the way the client ends it: `AbortError` for `fetch`, `CanceledError` for axios, no data for api-client.
+
+`@mrzr/api-client`'s `delete` takes no body, so a `DELETE` operation with one is left out and listed (pick another `http` to send it).
 
 ## Your own transport
 
@@ -204,7 +206,7 @@ export default defineConfig({
     types: { module: "../types", request: "GeneratedRequestConfig", query: "ApiQueryOptions", mutation: "ApiMutationOptions", maybeGetter: "MaybeGetter" },
     list: { name: "ApiListData", module: "@/types", count: "count", items: "list" },   // or false
     envelope: { name: "ApiEnvelope", module: "../../types/api", result: "result", data: "data", keys: ["result", "code", "message", "data"] }, // or false
-    requestKeys: { query: "params", pathParams: "addTemplateToUrl", formData: "isFormData", baseUrl: "baseUrl", signal: "signal", headers: "headers", envelope: "isEnvelope", body: "body" },
+    requestKeys: { query: "params", pathParams: "addTemplateToUrl", formData: "isFormData", baseUrl: "baseUrl", signal: "signal", headers: "headers", envelope: "isEnvelope", body: "body", responseType: "responseType" },
     services: { module: "@/config/api", fn: "serviceBaseUrl" },   // or { baseUrls: { users: "https://…" } }
   },
 });
@@ -212,21 +214,21 @@ export default defineConfig({
 
 Module paths are written as-is into the generated files, so paths relative to the output folder must be relative to it. `library` still decides how the generated hooks are named (`use…`, `create…`, `inject…`) and whether they read their arguments through `toValue` / `MaybeGetter` (the reactive libraries) — a custom runtime has to export those two names then, and its wrappers are named `<prefix>ApiQuery` by default.
 
-The transport contract is `apiGet<T>(route, config)`, `apiPost<T>(route, body, config)` (also put / patch), `apiDelete<T>(route, config)`, where `config` carries `signal`, `params` (query), `addTemplateToUrl` (`{pet_id: "1"}` for `/pets/{pet_id}`), `isFormData` and `baseUrl`. Each resolves to the unwrapped payload.
+The transport contract is `apiGet<T>(route, config)`, `apiPost<T>(route, body, config)` (also put / patch), `apiDelete<T>(route, config)`, where `config` carries `signal`, `params` (query), `addTemplateToUrl` (`{pet_id: "1"}` for `/pets/{pet_id}`), `isFormData` and `baseUrl`. Each resolves to the payload — whatever your transport makes of the answer.
 
-`headers` (declared header parameters, and the `Content-Type` of a body that is not JSON), `isEnvelope` and `body` (the key a `DELETE`'s body rides in) are written only for the built-in runtime. A custom transport gets them when `requestKeys.headers` / `requestKeys.envelope` / `requestKeys.body` name a key; until then a header parameter is reported instead of being sent and a `DELETE` with a body is skipped with a warning.
+`headers` (declared header parameters, and the `Content-Type` of a body that is not JSON), `body` (the key a `DELETE`'s body rides in), `responseType` (`"text"` or `"blob"` for a non-JSON answer) and `isEnvelope` are written only when the config names the key (`requestKeys.headers`, `.body`, `.responseType`, `.envelope`). Until then a header parameter is reported instead of being sent and a `DELETE` with a body is skipped with a warning. The built-in clients never use `isEnvelope`.
 
 `openapi-forge doctor` checks that the modules the config names can be found.
 
 ## What goes over the wire
 
-The built-in client writes what the document asks for, and reports (never silently changes) what it cannot:
+The generated code asks the client for what the document describes, and reports (never silently changes) what the client cannot do:
 
 | the document says | the client |
 | --- | --- |
-| a `header` parameter | an argument (`headers`) of the request function, a hook argument and part of the query key; `Accept`, `Content-Type` and `Authorization` are the transport's, as OpenAPI says |
+| a `header` parameter | an argument (`headers`) of the request function, a hook argument and part of the query key; `Accept`, `Content-Type` and `Authorization` are the transport's, as OpenAPI says. With `@mrzr/api-client` it is not an argument: headers are the client's own (`createClient({ headers })`, or `headers` in the config of a call) |
 | a `cookie` parameter | reported — a browser attaches cookies itself |
-| a query list | repeated keys, `a=1&a=2`; `explode: false` and `pipeDelimited` / `spaceDelimited` are reported |
+| a query list | repeated keys, `a=1&a=2` (written the same way for every client); `explode: false` and `pipeDelimited` / `spaceDelimited` are reported |
 | a query object | `a[b]=1` (deepObject); another style is reported |
 | a path list or object | `a,b` / `name,value,name,value` |
 | a body on `DELETE` | sent, from `config.body` — except by `api-client`, whose `delete` takes none: the operation is left out and listed |
@@ -234,7 +236,8 @@ The built-in client writes what the document asks for, and reports (never silent
 | `multipart/form-data` | one part per list item, a JSON part per object, a file as it is |
 | `application/x-www-form-urlencoded` | a form; a list repeats its key |
 | `text/plain`, `application/octet-stream`, other non-JSON bodies | sent as they are, with that `Content-Type` |
-| an answer | read by its `Content-Type`: JSON parsed, `text/*` as a string, anything else a `Blob`; an empty answer is `null` |
+| a non-JSON answer | the call says `responseType: "text"` (for `text/*`) or `"blob"` (anything else); the client reads it its own way. `fetch` reads every answer by its `Content-Type` |
+| a JSON answer | the client's own parsing; nothing is unwrapped or judged by the generated code |
 
 `undefined`, `null` and `""` are left out of a query string. A header value that is not text (a number, a flag) is written with `String()`.
 
@@ -242,10 +245,12 @@ A Swagger 2.0 query list is comma separated unless its `collectionFormat` says o
 
 ## Answers, envelopes and errors
 
-- **Envelope.** If an answer is `{ result, code, message, data }`, the generated types and calls speak only of `data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`. The decision is made **per operation**, from its response schema (it has `result` and `data`), and the request function says so with `isEnvelope: true` — the built-in client unwraps only those, so a payload that merely has a `result` field is returned as it is. `result: false` throws.
-- **Paged lists.** A `{ count, list }` payload becomes `ApiListData<T>` only when the document marks both fields `required`; otherwise it keeps its own type with optional fields, because `ApiListData` promises both are there. An API that always sends both can say so with `runtime: { list: { assumeRequired: true } }`.
-- Set `runtime.envelope: false` / `runtime.list: false` for an API with neither.
-- **Errors.** A non-2xx status or `result: false` throws `ApiResponseError` (exported from `types.ts`) with `status`, `code` and the parsed `body`.
+Nothing the generated code runs touches an answer, so the types say what the client returns:
+
+- **Envelope.** If the document's answer is `{ result, code, message, data }` and the client is `@mrzr/api-client`, which takes the `data` of such an answer itself, the types and calls speak only of `data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`. With `fetch`, axios or Angular the answer is delivered whole, so its type is the whole schema (an envelope is an ordinary model there). A `result: false` is the client's to judge — a `200` with `result: false` is returned as it is. For a custom transport that unwraps on its own, `runtime.envelope` describes the shape (`false` for none).
+- **Paged lists.** A `{ count, list }` payload becomes `ApiListData<T>` only when the document marks both fields `required`; otherwise it keeps its own type with optional fields, because `ApiListData` promises both are there. An API that always sends both can say so with `runtime: { list: { assumeRequired: true } }`; `runtime.list: false` turns it off.
+- **Errors.** A failed status is the client's error: an `AxiosError`, an `HttpErrorResponse`, an `ApiError` — and, for `fetch` only, an `ApiResponseError` (exported from `types.ts`) with `status` and `body`.
+- **Infinite lists** are written for a paged read whose answer *is* `{ count, list }`. When the answer is wrapped (an envelope with a client that does not unwrap it) the hook cannot be typed, so none is written and the run says so.
 
 ## Input
 
@@ -269,7 +274,7 @@ Give `input` a folder of documents (named after their files) or `{ name: fileOrU
 - Names come from `operationId` (or `method + path`). A name already taken — the same `operationId` in two services — gets the method appended (`getUser` → `getUserGet`), and a number only if that is taken too (`getUserGet2`).
 - An `operationId` that is not a usable function name (`delete`, `default`, `2fa`) falls back to a name built from the method and position; the same goes for a path argument called `in` or `delete`.
 - A schema named like a Go package (`handler.LoginBody`) becomes `HandlerLoginBody`, and every `$ref` follows. A schema named like a global type the generated code uses (`Date`, `Record`, …) gets a `Model` suffix; one that starts with a digit (`2FA`) gets a leading `_`.
-- Identical query / variable types (and models with related names) are written once; a query / variable type that is close to an earlier one is derived from it with `Omit<…> & { … }`.
+- Identical types are written once, without mixing what is different. Query / variable types of a tag are shared when their shapes match, and a close one is derived with `Omit<…> & { … }`. Of the models, a schema the document names is a contract and never becomes an alias of another; an inline object the generator named reuses an identical model when its shape says something of its own (it names another model, or has three fields) — a bare `{ id, name }` stays separate.
 - Only the imports a module uses are written, so a project may compile with `noUnusedLocals`.
 - Property names that are not identifiers are quoted; doc comments from the document's `description`s are kept (and defused if they contain `*/`).
 
@@ -402,7 +407,7 @@ Also exported: `generate`, `pull`, `doctor`, `watchRun`, `renderReport`, `summar
 
 `npm run conformance` generates the layer (with `zod` and `infinite` on) for every document of the public [`@readme/oas-examples`](https://www.npmjs.com/package/@readme/oas-examples) corpus — 60 Swagger 2.0 / OpenAPI 3.0 / 3.1 documents covering circular references, polymorphism, discriminators, uploads, parameter styles and more — plus the fixture of the client tests, once for every client, and type-checks the output with `tsc --strict --noUnusedLocals --noUnusedParameters` against the real types of each library. All 9 clients × 62 documents pass.
 
-The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios, Angular `HttpClient` and `@mrzr/api-client` clients are called against a local HTTP server (query strings, path encoding, JSON, multipart and form bodies, headers, a per-call `baseUrl`, `result: false`, failing statuses, abort, bytes and text answers, a payload with a `result` field — and an interceptor, for Angular). Every hook library is executed (over `fetch`, axios and `@mrzr/api-client`, and Angular Query also over `HttpClient`): React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument moves the query, a missing id waits, a mutation sends its variables, tearing down the owner aborts a mutation still in flight, a header argument is sent and moves the query, and an infinite list pages and sends its header with every page. A custom transport is compiled with its own config type and called with only the keys it has.
+The behaviour is run too, not only compiled (`npm test`): the `fetch`, axios, Angular `HttpClient` and `@mrzr/api-client` clients are called against a local HTTP server (query strings, path encoding, JSON, multipart and form bodies, headers, a per-call `baseUrl`, a `result: false` answer handed over as it is, each client's own error on a failing status, abort, bytes and text answers — and the interceptors of axios and Angular, which see the answer the way the client reads it). Every hook library is executed (over `fetch`, axios and `@mrzr/api-client`, and Angular Query also over `HttpClient`): React Query and SWR rendered in jsdom, Vue Query inside an app, Solid Query under its browser build, Svelte Query as a component compiled with the Svelte compiler, Angular Query in Angular's test bed. In each, data arrives, a changed argument moves the query, a mutation sends its variables, tearing down the owner aborts a mutation still in flight, a header argument is sent and moves the query, and an infinite list pages and sends its header with every page. A custom transport is compiled with its own config type and called with only the keys it has.
 
 `npm test` builds and runs the suite (Node 20, 22 and 24 alike); `npm run typecheck` checks the types only.
 

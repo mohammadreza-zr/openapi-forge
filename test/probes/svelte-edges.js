@@ -5,12 +5,13 @@
 import assert from "node:assert/strict";
 import { flushSync, mount, unmount } from "svelte";
 import { QueryClient } from "@tanstack/svelte-query";
-import { configureClient } from "@api/client";
+import * as clientModule from "@api/client";
+import { pointClient } from "./point.cjs";
 import Probe from "./ProbeEdges.svelte";
 
-const [port] = process.argv.slice(2);
+const [port, http] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
-configureClient({ baseUrl: `${base}/api/v1` });
+pointClient(http, clientModule, require, `${base}/api/v1`);
 
 const seen = () => fetch(`${base}/seen`).then((response) => response.json());
 async function until(check, what) {

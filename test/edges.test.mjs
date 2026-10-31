@@ -11,6 +11,7 @@ import { after, before, describe, test } from "node:test";
 import { emit } from "../dist/emit.js";
 import { compileCjs, generateTo } from "./harness.mjs";
 import { edges, options, petstore } from "./helpers.mjs";
+import { multipart, payloadOf, pointClient, urlencoded } from "./probes/point.cjs";
 import { serve } from "./server.mjs";
 
 const written = (patch, doc = edges()) =>
@@ -18,10 +19,10 @@ const written = (patch, doc = edges()) =>
 const edgesTs = (patch) => written(patch).files.get("edges.ts");
 
 describe("the code that is written", () => {
-  test("only an answer the document says is an envelope is unwrapped", () => {
+  test("nothing is unwrapped at run time: the built-in clients are told nothing about an envelope", () => {
     assert.doesNotMatch(edgesTs(), /isEnvelope/);
     const pets = written({}, petstore()).files.get("pets.ts");
-    assert.match(pets, /isEnvelope: true/);
+    assert.doesNotMatch(pets, /isEnvelope/);
     // A custom transport unwraps on its own, so it is told nothing …
     assert.doesNotMatch(
       written({ client: "custom" }, petstore()).files.get("pets.ts"),
@@ -83,7 +84,7 @@ describe("the code that is written", () => {
   test("a DELETE takes its body through the config; a custom transport without a key skips it", () => {
     const text = edgesTs({ http: "fetch" });
     // The default client, @mrzr/api-client, has a `delete` with no body.
-    assert.doesNotMatch(edgesTs(), /function remove\(/);
+    assert.doesNotMatch(edgesTs({ http: "api-client" }), /function remove\(/);
     assert.match(text, /export function remove\(\s*body: RemoveBody,/);
     assert.match(text, /apiDelete<null>\(\s*edgesEndpoints\.remove,\s*\{[^}]*body: body,/s);
     const custom = written({ client: "custom" });
@@ -99,7 +100,7 @@ describe("the code that is written", () => {
     const text = edgesTs({ infinite: true });
     assert.match(
       text,
-      /listPagesInfinite: \(params: Omit<ListPagesQuery, "start" \| "offset">, headers: ListPagesHeaders\) =>\s*\[\.\.\.edgesKeys\.lists\(\), edgesEndpoints\.listPages, "infinite", params, headers\]/,
+      /listPagesInfinite: \(params: Omit<ListPagesQuery, "start" \| "offset">, headers: ListPagesHeaders\) =>\s*\[\.\.\.edgesKeys\.all, "listPagesInfinite", params, headers\]/,
     );
     assert.match(text, /useListPagesInfiniteQuery\(\s*query: Omit<ListPagesQuery, "start" \| "offset"> = \{\},\s*headers: ListPagesHeaders,/);
     assert.match(text, /listPages\(\{ \.\.\.query, start: page\.start, offset: page\.size \}, headers, \{ signal \}\)/);
@@ -135,6 +136,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
       api = {
         edges: require(join(js, "edges.js")),
         client: require(join(js, "client.js")),
+        require,
       };
       backend = await serve((request) => {
         switch (request.url.split("?")[0].replace("/api/v1", "")) {
@@ -157,60 +159,73 @@ for (const http of ["fetch", "axios", "api-client"]) {
             return { body: {} };
         }
       });
-      api.client.configureClient({ baseUrl: backend.base });
+      pointClient(http, api.client, api.require, backend.base);
     });
     after(() => backend.close());
 
     const last = () => backend.seen.at(-1);
 
     test("a payload with a `result` field is the payload, not an envelope", async () => {
-      assert.deepEqual(await api.edges.search(), { result: "ok", total: 3 });
-      assert.deepEqual(await api.edges.check(), { result: false });
+      assert.deepEqual(payloadOf(http, await api.edges.search()), { result: "ok", total: 3 });
+      assert.deepEqual(payloadOf(http, await api.edges.check()), { result: false });
     });
 
-    test("a binary answer is a Blob with the bytes that were sent", async () => {
-      const blob = await api.edges.download();
-      assert.ok(blob instanceof Blob);
-      assert.deepEqual(Buffer.from(await blob.arrayBuffer()), bytes);
-      assert.equal(blob.type, "application/octet-stream");
+    test("a binary answer is asked for as bytes, and comes as the client gives bytes", async () => {
+      const answer = payloadOf(http, await api.edges.download());
+      // axios reads "blob" as a Blob in a browser, but as text in Node: its answer
+      // is its own there, and only the request is ours.
+      if (http === "axios") return assert.ok(answer !== undefined);
+      assert.ok(answer instanceof Blob);
+      assert.deepEqual(Buffer.from(await answer.arrayBuffer()), bytes);
     });
 
     test("a text answer stays text, even when it reads as JSON", async () => {
-      assert.equal(await api.edges.getText(), "123");
+      assert.equal(payloadOf(http, await api.edges.getText()), "123");
     });
 
-    test("an empty answer is null", async () => {
-      assert.equal(await api.edges.uploadMany({ title: "t" }), null);
+    test("an empty answer is what the client makes of it", async () => {
+      const answer = payloadOf(http, await api.edges.uploadMany(multipart(http, { title: "t" })));
+      if (http === "fetch") assert.equal(answer, null);
+      else if (http === "axios") assert.equal(answer, "");
+      else assert.equal(answer, undefined);
     });
 
     test("header parameters are sent, and the call's own headers are kept", async () => {
-      await api.edges.getTenant(
-        {},
-        { "X-Tenant-Id": "t1", "X-Page": 2 },
-        { headers: { "X-Trace": "z" } },
-      );
+      if (http === "api-client") {
+        // The client's headers are its own: they go in the config of the call.
+        await api.edges.getTenant({}, { headers: { "X-Tenant-Id": "t1", "X-Page": "2", "X-Trace": "z" } });
+      } else {
+        await api.edges.getTenant(
+          {},
+          { "X-Tenant-Id": "t1", "X-Page": 2 },
+          { headers: { "X-Trace": "z" } },
+        );
+      }
       assert.equal(last().headers["x-tenant-id"], "t1");
       assert.equal(last().headers["x-page"], "2");
       assert.equal(last().headers["x-trace"], "z");
       // An optional header left out is not sent as "undefined".
-      await api.edges.getTenant({}, { "X-Tenant-Id": "t2" });
+      if (http === "api-client") await api.edges.getTenant({}, { headers: { "X-Tenant-Id": "t2" } });
+      else await api.edges.getTenant({}, { "X-Tenant-Id": "t2" });
       assert.equal(last().headers["x-page"], undefined);
     });
 
     test("an object in the query is written name[property]=value", async () => {
       await api.edges.getTenant(
         { filter: { a: "x" }, q: "" },
-        { "X-Tenant-Id": "t" },
+        ...(http === "api-client" ? [{ headers: { "X-Tenant-Id": "t" } }] : [{ "X-Tenant-Id": "t" }]),
       );
       assert.equal(last().url, "/api/v1/tenant?filter%5Ba%5D=x");
     });
 
     test("a multipart body has a part per list item and a JSON part per object", async () => {
-      await api.edges.uploadMany({
-        title: "t",
-        files: [new Blob(["AAA"]), new Blob(["BBB"])],
-        meta: { a: "1" },
-      });
+      await api.edges.uploadMany(
+        multipart(http, {
+          title: "t",
+          files: [new Blob(["AAA"]), new Blob(["BBB"])],
+          meta: { a: "1" },
+        }),
+      );
       const body = last().body;
       assert.equal(body.match(/name="files"/g)?.length, 2);
       assert.match(body, /AAA/);
@@ -220,7 +235,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
     });
 
     test("a urlencoded body is a form, a list repeating its key", async () => {
-      await api.edges.sendForm({ a: "1", tags: ["x", "y"] });
+      await api.edges.sendForm(urlencoded(http, { a: "1", tags: ["x", "y"] }));
       assert.match(
         last().headers["content-type"],
         /^application\/x-www-form-urlencoded/,
@@ -229,7 +244,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
     });
 
     test("a text body is sent as the text, not as a JSON string", async () => {
-      assert.equal(await api.edges.sendNote("hello"), "got it");
+      assert.equal(payloadOf(http, await api.edges.sendNote("hello")), "got it");
       assert.match(last().headers["content-type"], /^text\/plain/);
       assert.equal(last().body, "hello");
     });

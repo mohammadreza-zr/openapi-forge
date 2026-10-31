@@ -6,13 +6,18 @@ const { createRequire } = require("node:module");
 const { join } = require("node:path");
 
 globalThis.window = globalThis;
-const [dir, port] = process.argv.slice(2);
+const [dir, port, http] = process.argv.slice(2);
 const base = `http://127.0.0.1:${port}`;
 const load = createRequire(join(dir, "load.cjs"));
 const { createRoot, createSignal, untrack } = load("solid-js");
 const { QueryClient, QueryClientProvider } = load("@tanstack/solid-query");
 const edges = load(join(dir, "js/edges.js"));
-load(join(dir, "js/client.js")).configureClient({ baseUrl: `${base}/api/v1` });
+require("./point.cjs").pointClient(
+  http,
+  load(join(dir, "js/client.js")),
+  load,
+  `${base}/api/v1`,
+);
 
 const seen = () => fetch(`${base}/seen`).then((response) => response.json());
 async function until(check, what) {

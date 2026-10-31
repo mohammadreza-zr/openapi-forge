@@ -71,7 +71,7 @@ test("nothing extra is emitted unless asked for", () => {
 });
 
 test("infinite adds one hook and one key to a paged read", () => {
-  const items = emit(paged(), options({ infinite: true }), "x").files.get(
+  const items = emit(paged(), options({ infinite: true, http: "api-client" }), "x").files.get(
     "items.ts",
   );
   assert.match(
@@ -83,7 +83,7 @@ test("infinite adds one hook and one key to a paged read", () => {
 });
 
 test("infinite skips a read that lacks the paging parameters", () => {
-  const { files } = emit(petstore(), options({ infinite: true }), "x");
+  const { files } = emit(petstore(), options({ infinite: true, http: "api-client" }), "x");
   assert.doesNotMatch([...files.values()].join(""), /InfiniteQuery/);
 });
 

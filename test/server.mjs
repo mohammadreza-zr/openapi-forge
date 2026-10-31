@@ -65,7 +65,9 @@ export async function serve(reply) {
   };
 }
 
-const ok = (data) => ({ body: { result: true, code: 0, data } });
+// Plain payloads: the built-in clients return what the server sent, so a test
+// that wants an envelope on the wire writes one itself.
+const ok = (data) => ({ body: data });
 export { ok };
 
 /** The clients fixture's API: pets by id, a paged list of five, visits, create. */

@@ -34,7 +34,7 @@ const svelte = {
   },
 };
 
-for (const http of ["fetch", "axios", "api-client"]) test(`svelte-query hooks follow state, wait for a missing id and stop with their component over ${http}`, async () => {
+for (const http of ["fetch", "axios", "api-client"]) test(`svelte-query hooks follow state and stop with their component over ${http}`, async () => {
   const dir = await generateTo(`svelte-${http}`, { library: "svelte-query", http });
   const entry = await bundle(dir, join(root, "test/probes/svelte.js"), {
     plugins: [svelte],
@@ -50,6 +50,7 @@ for (const http of ["fetch", "axios", "api-client"]) test(`svelte-query hooks fo
         join(root, "test/probes/dom.mjs"),
         entry,
         String(server.port),
+        http,
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -64,7 +65,8 @@ for (const http of ["fetch", "axios", "api-client"]) test(`svelte-query hooks fo
   }
 });
 
-for (const http of ["fetch", "axios", "api-client"]) test(`svelte-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
+// The client's headers are its own: the api-client functions take none as an argument.
+for (const http of ["fetch", "axios"]) test(`svelte-query hooks take header arguments, also for an infinite list over ${http}`, async () => {
   const dir = await generateTo(`svelte-edges-${http}`, {
     library: "svelte-query",
     http,
@@ -80,7 +82,7 @@ for (const http of ["fetch", "axios", "api-client"]) test(`svelte-query hooks ta
   try {
     const child = spawn(
       process.execPath,
-      ["--import", join(root, "test/probes/dom.mjs"), entry, String(server.port)],
+      ["--import", join(root, "test/probes/dom.mjs"), entry, String(server.port), http],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let output = "";

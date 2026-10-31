@@ -2,7 +2,7 @@
 // and turning the result into something Node can run — compiled to CommonJS
 // with tsc, or bundled with esbuild when a library needs a bundler.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +36,17 @@ export async function generateTo(name, patch = {}) {
     );
   } finally {
     Object.assign(console, { log, warn });
+  }
+  // The api-client file is the project's to edit: a test edits it too, so it can
+  // point the client at the server it started.
+  const file = join(dir, "ts", "client.ts");
+  const source = existsSync(file) ? readFileSync(file, "utf8") : "";
+  if (source.includes("export const apiClient = createClient();")) {
+    writeFileSync(
+      file,
+      source.replace("export const apiClient = createClient();", "export let apiClient = createClient();") +
+        "\nexport function setClientForTests(next: typeof apiClient) {\n  apiClient = next;\n}\n",
+    );
   }
   return dir;
 }

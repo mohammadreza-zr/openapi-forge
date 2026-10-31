@@ -1,8 +1,9 @@
-// `client.ts` of the built-in runtime. Everything but one function is the same
-// for every HTTP client: building the URL, the body and the headers, and
-// judging the answer. `send` is what differs — it hands one prepared request
-// to `fetch`, to an axios instance or to Angular's `HttpClient` and reports the
-// status and the body.
+// `client.ts` of the built-in runtime. The generated code decides what to send
+// (the route, the query, the headers and the body the document asks for); each
+// file below only hands that to its HTTP client and returns what the client
+// returns. Nothing is parsed, unwrapped or re-thrown on the way: an axios call
+// answers like axios, an Angular call like `HttpClient`, an `@mrzr/api-client`
+// call like `@mrzr/api-client`.
 import type { HttpClientName } from "../types.js";
 import { BANNER } from "./base.js";
 
@@ -11,293 +12,78 @@ interface Transport {
   imports: string;
   /** Packages those imports need (`doctor` looks for them). */
   packages: string[];
-  /** A line of the `settings` type, and its initial value, if the client has state. */
-  setting?: { type: string; initial: string };
-  /** The function(s) `send` is made of, and `send` itself. */
-  send: string;
+  /** Everything after the imports: settings, the helpers it uses and the verbs. */
+  source: string;
 }
 
-const TRANSPORTS: Record<HttpClientName, Transport> = {
-  fetch: {
-    imports: "",
-    packages: [],
-    send: `
-async function send(
-  method: string,
-  url: string,
-  headers: Record<string, string>,
-  payload: BodyInit | undefined,
-  signal: AbortSignal | undefined,
-): Promise<Answer> {
-  const response = await fetch(url, { method, headers, body: payload, signal });
-  return {
-    status: response.status,
-    statusText: response.statusText,
-    contentType: response.headers.get("content-type"),
-    bytes: await response.arrayBuffer(),
-  };
+// The pieces below are written into `client.ts`, so they hold no backtick and
+// no `${`: they are plain strings of the emitted file.
+
+/** How a path parameter is written, and the route with its `{name}` filled in. */
+const PATH = `
+/** How a path parameter is written: "a,b" for a list, "name,value,name,value" for an object. */
+function pathText(value: unknown): string {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? Object.entries(value).flat().join(",")
+    : String(value);
 }
-`,
-  },
-  axios: {
-    imports: 'import axios, { type AxiosInstance } from "axios";',
-    packages: ["axios"],
-    setting: {
-      type: "/** Interceptors, adapters and defaults live on the instance — replace it to bring your own. */\n  instance: AxiosInstance;",
-      initial: "instance: axios.create()",
-    },
-    send: `
-async function send(
-  method: string,
-  url: string,
-  headers: Record<string, string>,
-  payload: BodyInit | undefined,
-  signal: AbortSignal | undefined,
-): Promise<Answer> {
-  const response = await settings.instance.request<ArrayBuffer>({
-    method,
-    url,
-    headers,
-    data: payload,
-    signal,
-    // The bytes are read below by content type, and the status is judged
-    // there too, the same way for every HTTP client.
-    responseType: "arraybuffer",
-    validateStatus: () => true,
-  });
-  return {
-    status: response.status,
-    statusText: response.statusText,
-    contentType: String(response.headers["content-type"] ?? "") || null,
-    bytes: response.data,
-  };
-}
-`,
-  },
-  "api-client": {
-    imports: 'import { type ApiClient, createClient } from "@mrzr/api-client";',
-    packages: ["@mrzr/api-client"],
-    setting: {
-      type: "/** Tokens, refresh, plugins and defaults live on the client — replace it to bring your own: `configureClient({ instance: createClient({ … }) })`. */\n  instance: ApiClient;",
-      initial: 'instance: createClient({ baseUrl: "", worker: false })',
-    },
-    send: `
-async function send(
-  method: string,
-  url: string,
-  headers: Record<string, string>,
-  payload: BodyInit | undefined,
-  signal: AbortSignal | undefined,
-): Promise<Answer> {
-  const api = settings.instance;
-  const config = {
-    headers,
-    signal,
-    // The bytes are read below by content type, and the status is judged
-    // there too, the same way for every HTTP client.
-    responseType: "arrayBuffer" as const,
-    fullData: true,
-    throwError: false,
-    // The body is already what goes on the wire: a string, a form, bytes.
-    stringifyBody: false,
-    isFormData: payload instanceof FormData,
-  };
-  const response =
-    method === "GET"
-      ? await api.get<ArrayBuffer>(url, config)
-      : method === "DELETE"
-        ? await api.delete<ArrayBuffer>(url, config)
-        : await api[method.toLowerCase() as "post" | "put" | "patch"]<ArrayBuffer>(
-            url,
-            payload,
-            config,
-          );
-  // A canceled request resolves with \`canceled\`; here it rejects, as in the others.
-  if (response.canceled) {
-    throw (
-      signal?.reason ?? new DOMException("This operation was aborted", "AbortError")
-    );
+`;
+
+const FILL_PATH = `
+/** The route with its {name} filled in. */
+function fillPath(route: string, values: Record<string, unknown> = {}): string {
+  let path = route;
+  for (const [key, value] of Object.entries(values)) {
+    path = path.replaceAll("{" + key + "}", encodeURIComponent(pathText(value)));
   }
-  // A status of 0 is no answer at all — the network failed.
-  if (response.statusCode === 0) {
-    throw response.error ?? new Error(response.message);
-  }
-  // A failed answer with a textual type arrives already parsed (so that its
-  // message and errors are filled in); back to bytes, for the one reader.
-  const data: unknown = response.data;
-  const bytes =
-    data instanceof ArrayBuffer
-      ? data
-      : new TextEncoder().encode(
-          data === undefined
-            ? ""
-            : typeof data === "string"
-              ? data
-              : JSON.stringify(data),
-        );
-  return {
-    status: response.statusCode,
-    statusText: response.message,
-    contentType: response.headers?.["content-type"] ?? null,
-    bytes,
-  };
+  return path;
 }
-`,
-  },
-  angular: {
-    imports: `import { HttpClient, HttpErrorResponse } from "@angular/common/http";
-import { EmptyError, Observable, firstValueFrom, takeUntil } from "rxjs";`,
-    packages: ["@angular/common", "rxjs"],
-    setting: {
-      type: "/** Angular's HttpClient, so its interceptors apply: \`configureClient({ instance: inject(HttpClient) })\` at start-up. */\n  instance?: HttpClient;",
-      initial: "",
-    },
-    send: `
-async function send(
-  method: string,
-  url: string,
-  headers: Record<string, string>,
-  payload: BodyInit | undefined,
-  signal: AbortSignal | undefined,
-): Promise<Answer> {
-  const http = settings.instance;
-  if (!http) {
-    throw new Error(
-      "configureClient({ instance: inject(HttpClient) }) must run before the first request.",
-    );
+`;
+
+/** The headers, the query string and the body, written as the document asks. */
+const WIRE = `
+/** Header values are text on the wire; undefined and null leave a header out. */
+function textHeaders(headers: Record<string, unknown> = {}): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (value !== undefined && value !== null) out[name] = String(value);
   }
-  // HttpClient takes no AbortSignal; unsubscribing from the request cancels it.
-  const aborted = new Observable<void>((subscriber) => {
-    if (signal?.aborted) subscriber.next();
-    signal?.addEventListener("abort", () => subscriber.next(), { once: true });
-  });
-  try {
-    const response = await firstValueFrom(
-      http
-        .request(method, url, {
-          headers,
-          body: payload,
-          observe: "response",
-          responseType: "arraybuffer",
-        })
-        .pipe(takeUntil(aborted)),
-    );
-    return {
-      status: response.status,
-      statusText: response.statusText,
-      contentType: response.headers.get("content-type"),
-      bytes: response.body ?? new ArrayBuffer(0),
-    };
-  } catch (error) {
-    // A status of 0 is no answer at all — the network failed.
-    if (error instanceof HttpErrorResponse && error.status !== 0) {
-      return {
-        status: error.status,
-        statusText: error.statusText,
-        contentType: error.headers.get("content-type"),
-        bytes:
-          error.error instanceof ArrayBuffer ? error.error : new ArrayBuffer(0),
-      };
-    }
-    if (error instanceof EmptyError && signal?.aborted) {
-      throw (
-        signal.reason ?? new DOMException("This operation was aborted", "AbortError")
-      );
-    }
-    throw error;
-  }
-}
-`,
-  },
-};
-
-export const HTTP_CLIENTS = Object.keys(TRANSPORTS) as HttpClientName[];
-
-/** The packages the written `client.ts` imports. */
-export const httpPackages = (http: HttpClientName): string[] =>
-  TRANSPORTS[http].packages;
-
-export function clientSource(http: HttpClientName): string {
-  const { imports, setting, send } = TRANSPORTS[http];
-  return `${BANNER}
-${imports}
-import {
-  type ApiEnvelope,
-  ApiResponseError,
-  type GeneratedRequestConfig,
-} from "./types";
-
-/** What a transport hands back: the status and the answer's raw bytes. */
-type Answer = {
-  status: number;
-  statusText: string;
-  contentType: string | null;
-  bytes: BufferSource;
-};
-
-/**
- * Where requests go when a call names no \`baseUrl\`. Set it once at start-up:
- * \`configureClient({ baseUrl: "https://api.example.com/v1" })\`.
- */
-const settings: {
-  baseUrl: string;
-  headers: () => Record<string, string> | Promise<Record<string, string>>;${setting ? `\n  ${setting.type}` : ""}
-} = { baseUrl: "", headers: () => ({})${setting?.initial ? `, ${setting.initial}` : ""} };
-
-export function configureClient(next: Partial<typeof settings>) {
-  Object.assign(settings, next);
+  return out;
 }
 
-/** \`a=1&a=2\` for a list, \`a[b]=1\` for an object; \`undefined\`, \`null\` and \`""\` are left out. */
+/** The Content-Type the call names, lower-cased; empty when it names none. */
+const contentTypeOf = (headers: Record<string, string>) =>
+  (
+    Object.entries(headers).find(([key]) => key.toLowerCase() === "content-type")?.[1] ?? ""
+  ).toLowerCase();
+
+/** "a=1&a=2" for a list, "a[b]=1" for an object; undefined, null and "" are left out. */
 function appendParam(query: URLSearchParams, key: string, value: unknown) {
   if (value === undefined || value === null || value === "") return;
   if (Array.isArray(value)) {
     for (const item of value) appendParam(query, key, item);
   } else if (typeof value === "object") {
     for (const [name, item] of Object.entries(value)) {
-      appendParam(query, \`\${key}[\${name}]\`, item);
+      appendParam(query, key + "[" + name + "]", item);
     }
   } else {
     query.append(key, String(value));
   }
 }
 
-function buildUrl(
-  route: string,
-  config: GeneratedRequestConfig | undefined,
-): string {
-  let path = route;
-  for (const [key, value] of Object.entries(config?.addTemplateToUrl ?? {})) {
-    // A list is written \`a,b\`, an object \`name,value,name,value\`.
-    const text =
-      value !== null && typeof value === "object" && !Array.isArray(value)
-        ? Object.entries(value).flat().join(",")
-        : String(value);
-    path = path.replaceAll(\`{\${key}}\`, encodeURIComponent(text));
-  }
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(config?.params ?? {})) {
-    appendParam(query, key, value);
-  }
-  const text = query.toString();
-  const base = (config?.baseUrl ?? settings.baseUrl).replace(/\\/$/, "");
-  return \`\${base}\${path}\${text ? \`?\${text}\` : ""}\`;
-}
-
-/** A header's value, whatever its capitals. */
-const headerOf = (headers: Record<string, string>, name: string) =>
-  Object.entries(headers).find(([key]) => key.toLowerCase() === name)?.[1];
-
-/** What the body is sent as: multipart for an upload, the \`Content-Type\` the call names, JSON otherwise. */
-function encodeBody(
+/**
+ * The body in the form its media type asks for: multipart for an upload (a file
+ * as it is, a list as a part per item, an object as JSON), a form for
+ * application/x-www-form-urlencoded. Anything else — a JSON value, text, bytes —
+ * is handed to the client as it is.
+ */
+function shapeBody(
   body: unknown,
   headers: Record<string, string>,
   isFormData: boolean | undefined,
-): BodyInit | undefined {
+): unknown {
   if (body === undefined || body === null) return undefined;
   if (isFormData) {
-    // One part per field: a file as it is, a list as a part per item, an
-    // object as JSON, anything else as text.
     const form = new FormData();
     for (const [name, value] of Object.entries(body)) {
       for (const item of Array.isArray(value) ? value : [value]) {
@@ -314,88 +100,30 @@ function encodeBody(
     }
     return form;
   }
-  const type = headerOf(headers, "content-type") ?? "";
-  if (type.startsWith("application/x-www-form-urlencoded")) {
+  if (contentTypeOf(headers).startsWith("application/x-www-form-urlencoded")) {
     const form = new URLSearchParams();
     for (const [name, value] of Object.entries(body)) {
       appendParam(form, name, value);
     }
     return form;
   }
-  // Text and bytes (a \`Content-Type\` that is not JSON) are sent as they are.
-  if (type && !type.includes("json")) return body as BodyInit;
-  if (!type) headers["Content-Type"] = "application/json";
-  return JSON.stringify(body);
+  return body;
 }
+`;
 
-/** The answer's payload by its content type: JSON parsed, text as it is, anything else a Blob. */
-function readBody({ bytes, contentType }: Answer): unknown {
-  const type = (contentType ?? "").split(";")[0].trim().toLowerCase();
-  const isJson = type.includes("json");
-  const isText = type.startsWith("text/") && !isJson;
-  if (type && !isJson && !isText) return new Blob([bytes], { type });
-  if (!bytes.byteLength) return null;
-  const text = new TextDecoder().decode(bytes);
-  if (isText) return text;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
+/** The query string, for the clients that take it ready (@mrzr/api-client writes its own). */
+const QUERY = `
+function queryOf(params: Record<string, unknown> = {}): URLSearchParams {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    appendParam(query, key, value);
   }
+  return query;
 }
+`;
 
-/**
- * The payload of an answer. Only a call marked \`isEnvelope\` is unwrapped — the
- * request function knows from the document that its answer is wrapped — so a
- * payload that merely has a \`result\` field is never mistaken for one.
- */
-function unwrap<T>(body: unknown, status: number, isEnvelope?: boolean): T {
-  const envelope = body as Partial<ApiEnvelope<T>> | null;
-  if (!isEnvelope || !envelope || typeof envelope !== "object") return body as T;
-  if (!("result" in envelope)) return body as T;
-  if (envelope.result === false) {
-    throw new ApiResponseError(
-      typeof envelope.message === "string"
-        ? envelope.message
-        : "The request failed.",
-      { status, code: envelope.code, body },
-    );
-  }
-  return envelope.data as T;
-}
-${send}
-async function request<T>(
-  method: string,
-  route: string,
-  body: unknown,
-  config?: GeneratedRequestConfig<T>,
-): Promise<T> {
-  const headers: Record<string, string> = {
-    Accept: "application/json, text/plain, */*",
-    ...(await settings.headers()),
-  };
-  // A header's value is written with \`String()\`; \`undefined\` and \`null\` leave it out.
-  for (const [name, value] of Object.entries(config?.headers ?? {})) {
-    if (value !== undefined && value !== null) headers[name] = String(value);
-  }
-  const payload = encodeBody(body, headers, config?.isFormData);
-  const answer = await send(
-    method,
-    buildUrl(route, config),
-    headers,
-    payload,
-    config?.signal,
-  );
-  const answerBody = readBody(answer);
-  if (answer.status < 200 || answer.status > 299) {
-    throw new ApiResponseError(answer.statusText || "The request failed.", {
-      status: answer.status,
-      body: answerBody,
-    });
-  }
-  return unwrap<T>(answerBody, answer.status, config?.isEnvelope);
-}
-
+/** The verbs every client exports, over its own `request`. */
+const VERBS = `
 export const apiGet = <T>(route: string, config?: GeneratedRequestConfig<T>) =>
   request<T>("GET", route, undefined, config);
 export const apiDelete = <T>(
@@ -418,4 +146,207 @@ export const apiPatch = <T>(
   config?: GeneratedRequestConfig<T>,
 ) => request<T>("PATCH", route, body, config);
 `;
+
+const TRANSPORTS: Record<HttpClientName, Transport> = {
+  fetch: {
+    imports: 'import { ApiResponseError, type GeneratedRequestConfig } from "./types";',
+    packages: [],
+    source: `
+/**
+ * Where requests go when a call names no baseUrl, and the headers every request
+ * carries. Set them once at start-up:
+ * configureClient({ baseUrl: "https://api.example.com/v1" }).
+ */
+const settings: {
+  baseUrl: string;
+  headers: () => Record<string, string> | Promise<Record<string, string>>;
+} = { baseUrl: "", headers: () => ({}) };
+
+export function configureClient(next: Partial<typeof settings>) {
+  Object.assign(settings, next);
+}
+${PATH}${FILL_PATH}${WIRE}${QUERY}
+/** The answer by its Content-Type: JSON parsed, text as it is, anything else a Blob; an empty answer is null. */
+async function readBody(response: Response): Promise<unknown> {
+  const type = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  const isJson = type.includes("json");
+  if (type && !isJson && !type.startsWith("text/")) return response.blob();
+  const text = await response.text();
+  if (!text) return null;
+  if (type.startsWith("text/") && !isJson) return text;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+async function request<T>(
+  method: string,
+  route: string,
+  body: unknown,
+  config?: GeneratedRequestConfig<T>,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: "application/json, text/plain, */*",
+    ...(await settings.headers()),
+    ...textHeaders(config?.headers),
+  };
+  let payload = shapeBody(body, headers, config?.isFormData);
+  const type = contentTypeOf(headers);
+  // fetch sends text, bytes and forms as they are; a JSON value is written out here.
+  if (
+    payload !== undefined &&
+    !(payload instanceof FormData) &&
+    !(payload instanceof URLSearchParams) &&
+    (!type || type.includes("json"))
+  ) {
+    if (!type) headers["Content-Type"] = "application/json";
+    payload = JSON.stringify(payload);
+  }
+  const query = queryOf(config?.params).toString();
+  const base = (config?.baseUrl ?? settings.baseUrl).replace(/\\/$/, "");
+  const response = await fetch(
+    base + fillPath(route, config?.addTemplateToUrl) + (query ? "?" + query : ""),
+    { method, headers, body: payload as BodyInit | undefined, signal: config?.signal },
+  );
+  const answer = await readBody(response);
+  // fetch resolves on any status; a failed one rejects here, as the other clients do natively.
+  if (!response.ok) {
+    throw new ApiResponseError(response.statusText || "The request failed.", {
+      status: response.status,
+      body: answer,
+    });
+  }
+  return answer as T;
+}
+${VERBS}`,
+  },
+  axios: {
+    imports: `import axios, { type AxiosInstance } from "axios";
+import type { GeneratedRequestConfig } from "./types";`,
+    packages: ["axios"],
+    source: `
+/**
+ * Interceptors, adapters, base URL and defaults live on the instance — replace
+ * it to bring your own: configureClient({ instance }).
+ */
+const settings: { instance: AxiosInstance } = { instance: axios.create() };
+
+export function configureClient(next: Partial<typeof settings>) {
+  Object.assign(settings, next);
+}
+${PATH}${FILL_PATH}${WIRE}${QUERY}
+/** The answer is axios's own: its parsing, its interceptors, and an AxiosError on a failed status. */
+async function request<T>(
+  method: string,
+  route: string,
+  body: unknown,
+  config?: GeneratedRequestConfig<T>,
+): Promise<T> {
+  const headers = textHeaders(config?.headers);
+  const response = await settings.instance.request<T>({
+    method,
+    url: fillPath(route, config?.addTemplateToUrl),
+    baseURL: config?.baseUrl,
+    params: queryOf(config?.params),
+    headers,
+    data: shapeBody(body, headers, config?.isFormData),
+    responseType: config?.responseType,
+    signal: config?.signal,
+  });
+  return response.data;
+}
+${VERBS}`,
+  },
+  "api-client": {
+    imports: 'import { createClient } from "@mrzr/api-client";',
+    packages: ["@mrzr/api-client"],
+    // The generated functions call the client themselves, with its own config,
+    // and return its own answer: there is no wrapper and nothing to configure
+    // here but the client itself, in the file the project owns.
+    source: `
+/**
+ * The client every generated call goes through. This file is yours: give it the
+ * base URL, tokens and plugins it needs, e.g. createClient({ baseUrl: "https://api.example.com/v1" }).
+ */
+export const apiClient = createClient();
+`,
+  },
+  angular: {
+    imports: `import { HttpClient } from "@angular/common/http";
+import { EmptyError, Observable, firstValueFrom, takeUntil } from "rxjs";
+import type { GeneratedRequestConfig } from "./types";`,
+    packages: ["@angular/common", "rxjs"],
+    source: `
+/**
+ * Angular's HttpClient, so its interceptors apply: configureClient({ instance:
+ * inject(HttpClient) }) at start-up. HttpClient has no base URL of its own: put
+ * the API's in an interceptor, as any Angular app does.
+ */
+const settings: { instance?: HttpClient } = {};
+
+export function configureClient(next: Partial<typeof settings>) {
+  Object.assign(settings, next);
+}
+${PATH}${FILL_PATH}${WIRE}${QUERY}
+/** The answer is HttpClient's own: its parsing, its interceptors, and an HttpErrorResponse on a failed status. */
+async function request<T>(
+  method: string,
+  route: string,
+  body: unknown,
+  config?: GeneratedRequestConfig<T>,
+): Promise<T> {
+  const http = settings.instance;
+  if (!http) {
+    throw new Error(
+      "configureClient({ instance: inject(HttpClient) }) must run before the first request.",
+    );
+  }
+  const headers = textHeaders(config?.headers);
+  const params: Record<string, string[]> = {};
+  for (const [key, value] of queryOf(config?.params)) (params[key] ??= []).push(value);
+  const signal = config?.signal;
+  // HttpClient takes no AbortSignal; unsubscribing from the request cancels it.
+  const aborted = new Observable<void>((subscriber) => {
+    if (signal?.aborted) subscriber.next();
+    signal?.addEventListener("abort", () => subscriber.next(), { once: true });
+  });
+  // Only a call that names its own base URL (a service of its own) gets one here.
+  const base = (config?.baseUrl ?? "").replace(/\\/$/, "");
+  try {
+    return await firstValueFrom(
+      http
+        .request<T>(method, base + fillPath(route, config?.addTemplateToUrl), {
+          headers,
+          params,
+          body: shapeBody(body, headers, config?.isFormData),
+          // HttpClient reads the answer as it is told to; the kind is typed per overload.
+          responseType: (config?.responseType ?? "json") as "json",
+        })
+        .pipe(takeUntil(aborted)),
+    );
+  } catch (error) {
+    // takeUntil ended the stream with nothing in it: that is the abort.
+    if (error instanceof EmptyError && signal?.aborted) {
+      throw (
+        signal.reason ?? new DOMException("This operation was aborted", "AbortError")
+      );
+    }
+    throw error;
+  }
+}
+${VERBS}`,
+  },
+};
+
+export const HTTP_CLIENTS = Object.keys(TRANSPORTS) as HttpClientName[];
+
+/** The packages the written `client.ts` imports. */
+export const httpPackages = (http: HttpClientName): string[] =>
+  TRANSPORTS[http].packages;
+
+export function clientSource(http: HttpClientName): string {
+  const { imports, source } = TRANSPORTS[http];
+  return `${BANNER}\n${imports}\n${source}`;
 }
