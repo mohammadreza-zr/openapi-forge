@@ -38,7 +38,7 @@ The output is plain, readable TypeScript that is formatted with your own Prettie
 - **Models** — one `type` per schema: inline objects get names, `allOf` / `oneOf` / `anyOf`, `nullable`, enums, tuples (`prefixItems`), records (`additionalProperties`), `Blob` for uploads, circular references.
 - **Routes** — `<tag>Endpoints`, the one place each URL is written; the request functions read their route from it, so a path changes in a single line.
 - **Request functions** — one per operation, with typed path, query, header and body arguments, a `config` argument for `signal`, `baseUrl` and the like, and a JSDoc block (summary, description, `METHOD /route`, `@deprecated`).
-- **Query-key factories** — `<tag>Keys` with `all` and one key per read: the tag, the operation's name and the arguments its answer depends on (`["Pets", "getPet", "7"]`), so invalidating "everything of this tag" is one line and no route is spelled into a key.
+- **Query-key factories** — `<tag>Keys` with `all` and one key per read: the tag, the operation's route (read from `<tag>Endpoints`) and the arguments its answer depends on (`["Pets", "/pets/{pet_id}", "7"]`), so invalidating "everything of this tag" is one line and a path still changes in one place.
 - **Hooks** for **React Query, Vue Query, Svelte Query, Solid Query, Angular Query or SWR**: a query hook per read, a mutation hook per write (or only plain request functions with `target: "requests"`).
 - **Reactive arguments** — in Vue, Svelte, Solid and Angular a hook argument may be a ref, a getter or a signal, and the query follows it.
 - **Zod validators** (`zod: true`) — `schemas.ts`, one validator per model, typed `z.ZodType<Model>` so the two cannot drift apart.
@@ -116,10 +116,15 @@ src/api/generated/
 A module (trimmed) looks like this:
 
 ```ts
+export const petsEndpoints = {
+  listPets: "/pets",
+  getPet: "/pets/{pet_id}",
+} as const;
+
 export const petsKeys = {
   all: ["Pets"] as const,
-  listPets: (params: ListPetsQuery) => [...petsKeys.all, "listPets", params] as const,
-  getPet: (petId: string) => [...petsKeys.all, "getPet", petId] as const,
+  listPets: (params: ListPetsQuery) => [...petsKeys.all, petsEndpoints.listPets, params] as const,
+  getPet: (petId: string) => [...petsKeys.all, petsEndpoints.getPet, petId] as const,
 } as const;
 
 export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string[] };

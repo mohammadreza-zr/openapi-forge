@@ -702,11 +702,11 @@ export function emit(
 
   const infiniteKey = (operation: OperationInfo) => `${operation.name}Infinite`;
 
-  function infiniteKeyEntry(operation: OperationInfo, keys: string) {
+  function infiniteKeyEntry(operation: OperationInfo, keys: string, endpoints: string) {
     const { omit, headers } = infiniteOf(operation)!;
     return [
       `  ${infiniteKey(operation)}: (params: ${omit}${headers ? `, headers: ${headers}` : ""}) =>`,
-      `    [...${keys}.all, ${JSON.stringify(infiniteKey(operation))}, params${headers ? ", headers" : ""}] as const,`,
+      `    [...${keys}.all, ${endpointRef(endpoints, operation)}, "infinite", params${headers ? ", headers" : ""}] as const,`,
     ].join("\n");
   }
 
@@ -744,8 +744,8 @@ export function emit(
       [
         `/**`,
         ` * The routes of "${tag}" — the one place each URL is written. The`,
-        ` * request functions read their route from here, so a path moves in a`,
-        ` * single line.`,
+        ` * request functions read their route from here${hooks ? ", and so do the keys," : ","}`,
+        ` * so a path moves in a single line.`,
         ` */`,
         `export const ${endpoints} = {`,
         ...operations.map(
@@ -754,7 +754,7 @@ export function emit(
         ),
         "} as const;",
       ].join("\n"),
-      hooks ? keyFactoryBlock(tag, operations, keys) : "",
+      hooks ? keyFactoryBlock(tag, operations, keys, endpoints) : "",
       shareIdenticalTypes(
         [
           ...operations.flatMap((operation) => [
@@ -878,11 +878,11 @@ export function emit(
 
   /**
    * `all` is the tag, so one call invalidates all of it; a key per read is the
-   * tag, the operation's name and the arguments its answer depends on. The name
-   * tells two reads of one tag apart (a detail by id and by code), so no route
-   * has to be spelled into a key.
+   * tag, the operation's route — read from the tag's `Endpoints` map, so it is
+   * written once — and the arguments its answer depends on. The route tells two
+   * reads of one tag apart (a detail by id and by code).
    */
-  function keyFactoryBlock(tag: string, operations: OperationInfo[], keys: string) {
+  function keyFactoryBlock(tag: string, operations: OperationInfo[], keys: string, endpoints: string) {
     const reads = operations.filter((operation) => operation.method === "get");
     return [
       `/** Query keys for "${tag}". */`,
@@ -918,12 +918,12 @@ export function emit(
         ].join(", ");
         return [
           `  ${propertyName(operation.name)}: (${args}) =>`,
-          `    [...${keys}.all, ${JSON.stringify(operation.name)}${tail ? `, ${tail}` : ""}] as const,`,
+          `    [...${keys}.all, ${endpointRef(endpoints, operation)}${tail ? `, ${tail}` : ""}] as const,`,
         ].join("\n");
       }),
       ...reads
         .filter((operation) => infiniteOf(operation))
-        .map((operation) => infiniteKeyEntry(operation, keys)),
+        .map((operation) => infiniteKeyEntry(operation, keys, endpoints)),
       "} as const;",
     ].join("\n");
   }

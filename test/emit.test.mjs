@@ -306,12 +306,12 @@ test("a bare { id, name } is a coincidence, not one model", () => {
   assert.match(models, /export type TwoResponse = \{/);
 });
 
-test("a key is the tag, the operation's name and what its answer depends on", () => {
+test("a key is the tag, the route from the Endpoints map and what its answer depends on", () => {
   const pets = run().files.get("pets.ts");
   assert.match(pets, /all: \["Pets"\] as const,/);
-  assert.match(pets, /listPets: \(params: ListPetsQuery\) =>\s*\[\.\.\.petsKeys\.all, "listPets", params\] as const,/);
-  assert.match(pets, /getPet: \(petId: string\) =>\s*\[\.\.\.petsKeys\.all, "getPet", petId\] as const,/);
-  // No route and no list / detail layer: the name already tells one read from another.
+  assert.match(pets, /listPets: \(params: ListPetsQuery\) =>\s*\[\.\.\.petsKeys\.all, petsEndpoints\.listPets, params\] as const,/);
+  assert.match(pets, /getPet: \(petId: string\) =>\s*\[\.\.\.petsKeys\.all, petsEndpoints\.getPet, petId\] as const,/);
+  // The route is read from the map, never spelled in a key; no list / detail layer.
   const keys = pets.slice(pets.indexOf("export const petsKeys"), pets.indexOf("} as const;", pets.indexOf("export const petsKeys")));
   assert.doesNotMatch(keys, /\/pets|lists\(\)|details\(\)/);
 });
