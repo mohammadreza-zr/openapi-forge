@@ -1924,20 +1924,15 @@ export function emit(
   ].sort();
   if (services.length) {
     const urls = rt.services.baseUrls ?? {};
-    // Without an address a service cannot be called (api-client refuses to start): say so.
-    for (const service of services) {
-      if (!rt.services.fn && !urls[service]) {
-        problems.set(`service ${service}: base URL`, {
-          where: `service ${service}`,
-          message:
-            "has no base URL: set `runtime.services.baseUrls` (or `runtime.services.fn`), or the layer cannot call it",
-        });
-      }
-    }
+    // Where a service lives: your function, a URL you gave, or — by default —
+    // the environment, in a variable named after the base URL's and the service
+    // (VITE_API_URL_FILE_PROCESSING). The client refuses a service with no
+    // address, saying so, so a missing variable is not a silent wrong call.
     const entry = (service: string): string => {
       if (rt.services.fn)
         return `${rt.services.fn}(${JSON.stringify(service)})`;
-      return JSON.stringify(urls[service] ?? "");
+      if (urls[service]) return JSON.stringify(urls[service]);
+      return `import.meta.env.${options.baseUrlEnv}_${service.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()} ?? ""`;
     };
     files.set(
       "services.ts",

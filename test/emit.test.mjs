@@ -178,15 +178,22 @@ test("one service is the client's own base URL: no plugin, no service map entrie
   assert.match(emit(spec, options({ http: "fetch", target: "requests" }), "x").files.get("pets.ts"), /fetch\(baseUrl \+ petsEndpoints\.listPets/);
 });
 
-test("a service with no base URL is reported, not left to fail at start-up", () => {
+test("a service's base URL is, by default, read from the environment — never from project code", () => {
   const spec = twoServices();
-  const said = (patch) =>
-    emit(spec, options(patch), "x").problems.map((item) => `${item.where} ${item.message}`).join("\n");
-  assert.match(said({}), /service pets has no base URL/);
-  assert.match(said({}), /service owners has no base URL/);
-  const urls = { pets: "https://pets.test", owners: "https://owners.test" };
-  assert.doesNotMatch(said({ runtime: { services: { baseUrls: urls } } }), /base URL/);
-  assert.doesNotMatch(said({ runtime: { services: { module: "./env", fn: "serviceBaseUrl" } } }), /base URL/);
+  const services = (patch) => emit(spec, options(patch), "x").files.get("services.ts");
+  const byDefault = services({});
+  assert.match(byDefault, /"pets": import\.meta\.env\.VITE_API_URL_PETS \?\? ""/);
+  assert.match(byDefault, /"owners": import\.meta\.env\.VITE_API_URL_OWNERS \?\? ""/);
+  assert.doesNotMatch(byDefault, /^import /m);
+  // The variable is named after baseUrlEnv and the service; dashes become underscores.
+  const dashed = twoServices();
+  for (const item of Object.values(dashed.paths))
+    for (const operation of Object.values(item)) if (operation["x-service"] === "pets") operation["x-service"] = "file-processing";
+  assert.match(emit(dashed, options({ baseUrlEnv: "VITE_SAHRA" }), "x").files.get("services.ts"), /"file-processing": import\.meta\.env\.VITE_SAHRA_FILE_PROCESSING \?\? ""/);
+  // A URL you give wins; your own function is used only when you name it.
+  assert.match(services({ runtime: { services: { baseUrls: { pets: "https://pets.test" } } } }), /"pets": "https:\/\/pets\.test"/);
+  const own = services({ runtime: { services: { module: "./env", fn: "serviceBaseUrl" } } });
+  assert.match(own, /import \{ serviceBaseUrl \} from "\.\/env"/);
 });
 
 test("the banner names the generator and the source", () => {
