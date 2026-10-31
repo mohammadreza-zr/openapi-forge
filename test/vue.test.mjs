@@ -10,7 +10,7 @@ import { after, before, describe, test } from "node:test";
 globalThis.window = globalThis;
 
 import { compileCjs, generateTo, sleep, until } from "./harness.mjs";
-import { payloadOf, pointClient } from "./probes/point.cjs";
+import { clientOf, payloadOf, pointClient } from "./probes/point.cjs";
 import { petApi, serve } from "./server.mjs";
 
 for (const http of ["fetch", "axios", "api-client"]) describe(`the vue-query hooks over ${http}`, () => {
@@ -31,7 +31,7 @@ for (const http of ["fetch", "axios", "api-client"]) describe(`the vue-query hoo
     vue = require("vue");
     const { QueryClient, VueQueryPlugin } = require("@tanstack/vue-query");
     server = await serve(petApi);
-    pointClient(http, require(join(js, "client.js")), require, server.base);
+    pointClient(http, clientOf(require, join(js, "client.js")), require, server.base);
     app = vue.createApp({});
     client = new QueryClient({
       defaultOptions: { queries: { gcTime: 0 }, mutations: { gcTime: 0 } },

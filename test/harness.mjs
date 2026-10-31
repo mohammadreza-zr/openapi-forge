@@ -41,12 +41,15 @@ export async function generateTo(name, patch = {}) {
   // point the client at the server it started.
   const file = join(dir, "ts", "client.ts");
   const source = existsSync(file) ? readFileSync(file, "utf8") : "";
-  if (source.includes("export const apiClient = createClient();")) {
-    writeFileSync(
-      file,
-      source.replace("export const apiClient = createClient();", "export let apiClient = createClient();") +
-        "\nexport function setClientForTests(next: typeof apiClient) {\n  apiClient = next;\n}\n",
-    );
+  for (const name of ["apiClient", "http"]) {
+    const line = new RegExp(`export const ${name} = (createClient|axios\\.create)\\(\\);`);
+    if (line.test(source)) {
+      writeFileSync(
+        file,
+        source.replace(line, (declaration) => declaration.replace("const", "let")) +
+          `\nexport function setClientForTests(next: typeof ${name}) {\n  ${name} = next;\n}\n`,
+      );
+    }
   }
   return dir;
 }
@@ -83,7 +86,7 @@ export function compileCjs(dir, extra = []) {
  * Bundles a probe that imports the generated layer as `@api/…` into one ES
  * module, and returns its path. `jsdom` stays outside the bundle.
  */
-export async function bundle(dir, entry, esbuildOptions = {}) {
+export async function bundle(dir, entry, { plugins = [], ...esbuildOptions } = {}) {
   const { build } = await import("esbuild");
   const outfile = join(dir, "bundle.mjs");
   await build({
@@ -95,6 +98,27 @@ export async function bundle(dir, entry, esbuildOptions = {}) {
     logLevel: "silent",
     alias: { "@api": join(dir, "ts") },
     external: ["jsdom"],
+    // Angular's `@Injectable` is a TypeScript (legacy) decorator, as in every Angular project.
+    tsconfigRaw: { compilerOptions: { experimentalDecorators: true } },
+    // `fetch` and Angular's `HttpClient` write no `client.ts`; a probe that
+    // points a client at the server then finds an empty module there.
+    plugins: [
+      ...plugins,
+      {
+        name: "no-client",
+        setup(builder) {
+          builder.onResolve({ filter: /^@api\/client$/ }, () =>
+            existsSync(join(dir, "ts", "client.ts"))
+              ? null
+              : { path: "client", namespace: "no-client" },
+          );
+          builder.onLoad({ filter: /.*/, namespace: "no-client" }, () => ({
+            contents: "",
+            loader: "js",
+          }));
+        },
+      },
+    ],
     banner: {
       // Some dependencies are CommonJS and call require.
       js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);',

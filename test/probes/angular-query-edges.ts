@@ -59,13 +59,6 @@ async function main() {
         )] : []),
     ],
   });
-  // The Angular HTTP client sends through the app's own HttpClient.
-  if (http === "angular") {
-    clientModule.configureClient({
-      instance: TestBed.runInInjectionContext(() => inject(HttpClient)),
-    });
-  }
-
   const tenant = signal("a");
   const { pages } = TestBed.runInInjectionContext(() => ({
     query: edges.injectGetTenantQuery({}, () => ({ "X-Tenant-Id": tenant() })),

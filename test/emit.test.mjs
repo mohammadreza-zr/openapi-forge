@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { resolveOptions } from "../dist/config.js";
 import { emit } from "../dist/emit.js";
+import { runtimeFiles } from "../dist/runtime/index.js";
 import { options, petstore } from "./helpers.mjs";
 
 // The product's default client is called straight on the client, with its own answer type.
@@ -62,14 +64,14 @@ test("target requests emits functions only", () => {
   assert.doesNotMatch(pets, /hooks/);
 });
 
-test("a multipart body is sent as form data and typed as a Blob", () => {
-  // Through a request function the client is told; @mrzr/api-client sees the FormData itself.
-  const fetched = run({ http: "fetch" }).files;
-  assert.match(fetched.get("pets.ts"), /isFormData: true/);
-  assert.match(fetched.get("models.ts"), /file\?: Blob;/);
-  const pets = run().files.get("pets.ts");
-  assert.doesNotMatch(pets, /isFormData/);
-  assert.match(pets, /body\?: FormData/);
+test("a multipart body is a FormData, whatever the client", () => {
+  // Every built-in client sees the FormData and sets the Content-Type itself.
+  for (const http of ["fetch", "axios", "api-client"]) {
+    const files = run({ http }).files;
+    assert.match(files.get("pets.ts"), /body\?: FormData/, http);
+    assert.doesNotMatch(files.get("pets.ts"), /isFormData/, http);
+    assert.match(files.get("models.ts"), /file\?: Blob;/, http);
+  }
 });
 
 test("tags can be included or excluded", () => {
@@ -127,7 +129,18 @@ test("services mark operations with their base URL", () => {
     "x",
   ).files;
   assert.match(files.get("services.ts"), /"pets": "https:\/\/pets\.test"/);
-  assert.match(files.get("pets.ts"), /baseUrl: config\?\.baseUrl \?\? API_SERVICE_BASE_URLS\["pets"\]/);
+  assert.match(files.get("pets.ts"), /baseURL: config\?\.baseURL \?\? API_SERVICE_BASE_URLS\["pets"\]/);
+  // @mrzr/api-client keeps a service of its own in its `services` plugin: the call names the service, nothing else.
+  const apiClient = emit(spec, options({ http: "api-client" }), "x");
+  assert.deepEqual(apiClient.services, ["pets"]);
+  assert.match(apiClient.files.get("pets.ts"), /apiClient\.service\("pets"\)\.get</);
+  assert.doesNotMatch(apiClient.files.get("pets.ts"), /baseUrl|API_SERVICE_BASE_URLS/);
+  const withServices = runtimeFiles(resolveOptions({ http: "api-client" }), ["pets"]).get("client.ts");
+  assert.match(withServices, /import \{ services \} from "@mrzr\/api-client\/services"/);
+  assert.match(withServices, /plugins: \[services\(API_SERVICE_BASE_URLS\)\]/);
+  assert.doesNotMatch(runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts"), /services/);
+  const fetched = emit(spec, options({ http: "fetch" }), "x").files.get("pets.ts");
+  assert.match(fetched, /fetch\(API_SERVICE_BASE_URLS\["pets"\] \+ petsEndpoints\./);
 });
 
 test("the banner names the generator and the source", () => {

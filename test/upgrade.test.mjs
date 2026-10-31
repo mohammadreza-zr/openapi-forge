@@ -94,7 +94,7 @@ test("Swagger 2.0 becomes OpenAPI 3.0", () => {
 });
 
 test("a Swagger 2.0 document emits real models and typed requests", () => {
-  const pets = emit(swagger(), options(), "swagger.json");
+  const pets = emit(swagger(), options({ http: "fetch" }), "swagger.json");
   assert.match(pets.files.get("models.ts"), /export type Pet = \{/);
   const code = pets.files.get("pets.ts");
   assert.match(code, /export function getPet\(\s*id: number,\s*query/);

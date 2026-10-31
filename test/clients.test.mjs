@@ -183,62 +183,64 @@ test("http picks what the built-in client sends with; the default is @mrzr/api-c
     runtimeFiles(resolveOptions()).get("client.ts"),
     runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts"),
   );
-  const fetchClient = runtimeFiles(resolveOptions({ http: "fetch" })).get(
-    "client.ts",
-  );
-  const axiosClient = runtimeFiles(resolveOptions({ http: "axios" })).get(
-    "client.ts",
-  );
-  assert.match(fetchClient, /await fetch\(/);
-  assert.doesNotMatch(fetchClient, /axios/);
-  assert.match(
-    axiosClient,
-    /import axios, \{ type AxiosInstance \} from "axios"/,
-  );
-  assert.match(axiosClient, /instance: axios\.create\(\)/);
-  assert.doesNotMatch(axiosClient, /await fetch\(/);
+  const files = (http, extra = {}) => runtimeFiles(resolveOptions({ http, ...extra }));
+  // axios and @mrzr/api-client have an instance the project owns; fetch is the
+  // platform's function and Angular injects its HttpClient, so neither has a file.
+  assert.match(files("axios").get("client.ts"), /export const http = axios\.create\(\);/);
+  assert.match(files("api-client").get("client.ts"), /createClient\(\)/);
+  assert.equal(files("fetch").has("client.ts"), false);
+  assert.equal(files("angular", { library: "angular-query" }).has("client.ts"), false);
 });
 
-test("no client but fetch reads or judges an answer: it is the client's own", () => {
-  const clientOf = (http) =>
-    runtimeFiles(resolveOptions({ http })).get("client.ts");
-  const typesOf = (http) =>
-    runtimeFiles(resolveOptions({ http })).get("types.ts");
-  for (const http of ["axios", "angular", "api-client"]) {
-    const client = clientOf(http);
-    assert.doesNotMatch(client, /readBody|ApiResponseError|function unwrap|arraybuffer/i, http);
-    assert.doesNotMatch(client, /validateStatus|throwError|isEnvelope/, http);
-    assert.doesNotMatch(typesOf(http), /ApiResponseError/, http);
+test("no client keeps a wrapper: each one is called as it is", () => {
+  for (const http of ["axios", "api-client"]) {
+    const client = runtimeFiles(resolveOptions({ http })).get("client.ts");
+    assert.doesNotMatch(client, /configureClient|async function request|function fillPath|shapeBody|textHeaders|queryOf/, http);
+    assert.doesNotMatch(runtimeFiles(resolveOptions({ http })).get("types.ts"), /ApiResponseError|GeneratedRequestConfig/, http);
   }
-  // fetch resolves on any status and parses nothing, so it has to do both.
-  assert.match(clientOf("fetch"), /function readBody/);
-  assert.match(typesOf("fetch"), /class ApiResponseError/);
+  const types = runtimeFiles(resolveOptions({ http: "fetch" })).get("types.ts");
+  assert.doesNotMatch(types, /ApiResponseError|GeneratedRequestConfig/);
 });
 
-test("axios gets what the document asks for and returns its answer; api-client is called straight", () => {
-  const axiosClient = runtimeFiles(resolveOptions({ http: "axios" })).get("client.ts");
-  assert.match(axiosClient, /settings\.instance\.request<T>\(/);
-  assert.match(axiosClient, /return response\.data;/);
-  // @mrzr/api-client has no wrapper: the generated functions call it, with its own config and answer.
-  const apiClient = runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts");
-  assert.doesNotMatch(apiClient, /async function request|apiGet|GeneratedRequestConfig/);
-  const pets = build({}).get("pets.ts");
-  assert.match(pets, /apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*\{\s*\.\.\.config,\s*addTemplateToUrl: \{ pet_id: petId \}/);
-  assert.match(pets, /config\?: RequestConfig<Pet>/);
-  assert.match(pets, /import type \{[^}]*\bRequestConfig\b[^}]*\} from "@mrzr\/api-client"/);
+test("axios, fetch and Angular are called straight, each in its own way", () => {
+  const pets = (http, library = "react-query") => build({ http, library }).get("pets.ts");
+  // axios: the instance, its config, its answer.
+  const axios = pets("axios");
+  assert.match(axios, /import \{ http \} from "\.\/client"/);
+  assert.match(axios, /http\.get<PetEnvelope>\(\s*petsEndpoints\.getPet\.replace\("\{pet_id\}", encodeURIComponent\(petId\)\),\s*config,/);
+  assert.match(axios, /config\?: AxiosRequestConfig/);
+  assert.match(axios, /ApiQueryOptions<AxiosResponse<PetEnvelope>/);
+  // The instance's own settings are left alone: a list is written however axios (or its paramsSerializer) writes it.
+  assert.doesNotMatch(axios, /paramsSerializer/);
+  // fetch: the platform function, its init, its Response.
+  const fetched = pets("fetch");
+  assert.match(fetched, /export function getPet\(petId: string, init\?: RequestInit\) \{\s*return fetch\(petsEndpoints\.getPet\.replace/);
+  assert.match(fetched, /const params = new URLSearchParams\(\);/);
+  assert.match(fetched, /for \(const item of query\.ids \?\? \[\]\) params\.append\("ids", String\(item\)\);/);
+  assert.match(fetched, /ApiQueryOptions<Response,/);
+  assert.match(fetched, /if \(!requestHeaders\.has\("Content-Type"\)\) requestHeaders\.set\("Content-Type", "application\/json"\);/);
+  assert.match(fetched, /body: JSON\.stringify\(body\)/);
+  // Angular: an injectable service over HttpClient, its Observable.
+  const angular = pets("angular", "angular-query");
+  assert.match(angular, /import \{ HttpClient \} from "@angular\/common\/http"/);
+  assert.match(angular, /@Injectable\(\{ providedIn: "root" \}\)\s*export class PetsService \{\s*private readonly http = inject\(HttpClient\);/);
+  assert.match(angular, /getPet\(petId: string\) \{\s*return this\.http\.get<PetEnvelope>\(petsEndpoints\.getPet\.replace/);
+  assert.match(angular, /const service = inject\(PetsService\);/);
+  assert.match(angular, /firstValueFrom\(service\.getPet\(toValue\(petId\)\)\)/);
+  // @mrzr/api-client is called straight too, with its own config and answer.
+  const apiClient = build({}).get("pets.ts");
+  assert.match(apiClient, /apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*\{\s*\.\.\.config,\s*addTemplateToUrl: \{ pet_id: petId \}/);
+  assert.match(apiClient, /config\?: RequestConfig<Pet>/);
+  assert.match(apiClient, /import type \{[^}]*\bRequestConfig\b[^}]*\} from "@mrzr\/api-client"/);
 });
 
-test("the angular client sends through the HttpClient it is given", () => {
-  const client = runtimeFiles(resolveOptions({ http: "angular" })).get(
-    "client.ts",
+test("Angular's requests are a service, so its hooks are Angular Query's", () => {
+  assert.throws(
+    () => resolveOptions({ http: "angular", library: "react-query" }),
+    /use library "angular-query"/,
   );
-  assert.match(client, /import \{ HttpClient \} from "@angular\/common\/http"/);
-  assert.match(client, /instance\?: HttpClient/);
-  assert.match(
-    client,
-    /configureClient\(\{ instance: inject\(HttpClient\) \}\)/,
-  );
-  assert.doesNotMatch(client, /await fetch\(|axios/);
+  assert.doesNotThrow(() => resolveOptions({ http: "angular", target: "requests" }));
+  assert.doesNotThrow(() => resolveOptions({ http: "angular", library: "angular-query" }));
 });
 
 test("an unknown library or http client is named", () => {
@@ -351,10 +353,12 @@ test("no built-in client sets an option that changes how its client behaves", ()
   // options that would make one client act like another.
   const forbidden =
     /validateStatus|throwError|throwOnCancel|stringifyBody|fullData|worker:|arraybuffer|arrayBuffer|observe:|withCredentials|credentials:|timeout|retry/;
-  for (const http of ["axios", "angular", "api-client"])
-    assert.doesNotMatch(
-      runtimeFiles(resolveOptions({ http })).get("client.ts").replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, ""),
-      forbidden,
-      http,
-    );
+  const strip = (text) => text.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
+  for (const [http, library] of [["axios", "react-query"], ["api-client", "react-query"], ["fetch", "react-query"], ["angular", "angular-query"]]) {
+    const files = build({ http, library, infinite: true });
+    for (const [name, text] of files)
+      assert.doesNotMatch(strip(text), forbidden, `${http} ${name}`);
+    for (const [name, text] of runtimeFiles(resolveOptions({ http, library })))
+      assert.doesNotMatch(strip(text), forbidden, `${http} ${name}`);
+  }
 });

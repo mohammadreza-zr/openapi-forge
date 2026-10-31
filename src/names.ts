@@ -74,9 +74,16 @@ export const isReserved = (name: string): boolean => RESERVED.has(name);
  * A valid identifier made of `value`, or `fallback` when nothing is left: no
  * name, a reserved word (`delete`) or a leading digit (`2fa`).
  */
-export function identifier(value: unknown, fallback: string): string {
+export function identifier(
+  value: unknown,
+  fallback: string,
+  avoid?: ReadonlySet<string>,
+): string {
   const clean = camelCase(value);
-  return clean && !/^\d/.test(clean) && !RESERVED_IDENTIFIERS.has(clean)
+  return clean &&
+    !/^\d/.test(clean) &&
+    !RESERVED_IDENTIFIERS.has(clean) &&
+    !avoid?.has(clean)
     ? clean
     : fallback;
 }

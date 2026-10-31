@@ -47,10 +47,10 @@ The output is plain, readable TypeScript that is formatted with your own Prettie
 
 **Transport**
 
-- **Four built-in HTTP clients** — [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (default), `fetch`, axios and Angular's `HttpClient`. **Each one behaves as itself**: the answer, the errors and the interceptors are the client's own; the generator only gives it the request the document describes.
+- **Four built-in HTTP clients** — [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) (default), `fetch`, axios and Angular's `HttpClient`. **Each one is called as itself, in its own way** — `apiClient.get(…)`, `http.get(…)` on an axios instance, `fetch(…)`, an injectable Angular service over `HttpClient`: the answer, the errors and the interceptors are the client's own, and the generator only gives it the request the document describes.
 - **Or your own** — `client: "custom"` imports your transport; every name and module path is configurable.
-- **The request the document describes** — header parameters, repeated / bracketed query keys, path lists and objects, `multipart/form-data`, `application/x-www-form-urlencoded`, text and binary bodies, bodies on `DELETE`, and how a non-JSON answer should be read (`text` or `blob`).
-- **Types that match the client** — the type of an answer is what the chosen client returns. `@mrzr/api-client` is called straight and answers with its own `IRes<T>`, whose `data` is the payload (it takes the `data` of a `{ data }` answer itself, so a `{ result, data }` envelope is typed as its `data`); with the other clients the whole answer is typed. `{ count, list }` becomes `ApiListData<T>`.
+- **The request the document describes** — the route, the query, header parameters, `multipart/form-data`, `application/x-www-form-urlencoded`, text and binary bodies, bodies on `DELETE`, and how a non-JSON answer should be read (`text` or `blob`). What a client cannot write is listed, not sent differently in silence.
+- **Types that match the client** — the type of an answer is what the chosen client returns. `@mrzr/api-client` is called straight and answers with its own `IRes<T>`, whose `data` is the payload (it takes the `data` of a `{ data }` answer itself, so a `{ result, data }` envelope is typed as its `data`); axios answers an `AxiosResponse<T>`, `fetch` a `Response`, Angular an `Observable<T>`. `{ count, list }` becomes `ApiListData<T>`.
 - **Cancellation** — queries, mutations and infinite lists pass an `AbortSignal` to the request (SWR cannot cancel, see below); what an aborted call does is the client's own.
 
 **Input**
@@ -76,8 +76,8 @@ npx openapi-forge init                       # writes openapi-forge.config.mjs
 npx openapi-forge --input swagger.json --out src/api/generated --api-prefix /api/v1
 ```
 
-With the default `client: "builtin"` three small files are written **once** next to the layer
-(`client.ts`, `hooks.ts`, `types.ts`). They are yours to edit and are never overwritten
+With the default `client: "builtin"` small files are written **once** next to the layer
+(`hooks.ts`, `types.ts`, and `client.ts` for the clients that have an instance — api-client and axios). They are yours to edit and are never overwritten
 (`--force-runtime` resets them). The hooks need the package of the library they wrap —
 `@tanstack/react-query` v5 by default, see [Hook libraries](#hook-libraries).
 
@@ -95,8 +95,7 @@ const create = useCreatePetMutation();
 create.mutate({ body: { name: "Tom" } });
 ```
 
-Without `@mrzr/api-client`, pick another client: `http: "fetch"` needs nothing installed and takes
-`configureClient({ baseUrl, headers: () => ({ Authorization: … }) })`; axios and Angular take their own instance (see [HTTP clients](#http-clients)).
+Without `@mrzr/api-client`, pick another client with `http`: `"axios"`, `"fetch"` (nothing to install) or `"angular"` (an injectable service over `HttpClient`). Each is called as itself — see [HTTP clients](#http-clients).
 
 ## What is generated
 
@@ -108,9 +107,9 @@ src/api/generated/
 ├── schemas.ts     Zod validators                  (zod: true)
 ├── services.ts    API_SERVICE_BASE_URLS           (per-service base URLs)
 ├── index.ts       re-exports everything
-├── client.ts      ┐
-├── hooks.ts       ├ the built-in runtime, written once, yours to edit
-└── types.ts       ┘
+├── client.ts      ┐ the built-in runtime, written once, yours to edit
+├── hooks.ts       │ (client.ts only for api-client and axios;
+└── types.ts       ┘  fetch and Angular's HttpClient need none)
 ```
 
 A module (trimmed) looks like this:
@@ -130,7 +129,7 @@ export const petsKeys = {
 export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string[] };
 
 /** List the pets — `GET /pets` */
-export function listPets(query: ListPetsQuery = {}, config?: GeneratedRequestConfig<ApiListData<Pet>>) { … }
+export function listPets(query: ListPetsQuery = {}, config?: RequestConfig<ApiListData<Pet>>) { … }   // the client's own config type
 
 export function useListPetsQuery(query: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
 export function useGetPetQuery(petId: string, options?: ApiQueryOptions<…>) { … }
@@ -180,23 +179,25 @@ Notes that follow from what each library offers:
 
 ## HTTP clients
 
-| `http` | sends with | `configureClient` | needs |
-| --- | --- | --- | --- |
-| `api-client` (default) | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client): token refresh, tab sync, plugins | none: edit the `createClient()` line of `client.ts` | `@mrzr/api-client` |
-| `fetch` | the platform's `fetch` | `{ baseUrl, headers }` | nothing |
-| `axios` | an axios instance | `{ instance }` | `axios` |
-| `angular` | Angular's `HttpClient`, so its interceptors apply (the base URL goes in an interceptor, as in any Angular app) | `{ instance: inject(HttpClient) }` at start-up | `@angular/common`, `rxjs` |
+Four clients, four different worlds. The generator does not put one behind another: every generated function calls the client it was made for, with that client's own types, and returns what that client returns. Nothing is parsed, unwrapped, retried or re-thrown on the way, and no setting of the client is changed.
 
-**The client is the client's.** `client.ts` only turns a generated call into the client's own request and returns what the client returns:
+| `http` | what a generated function is | returns | `client.ts` | needs |
+| --- | --- | --- | --- | --- |
+| `api-client` (default) | `apiClient.get(…)` with api-client's own `RequestConfig` | api-client's `IRes<T>` (`data`, `statusCode`, `message`, …) | `export const apiClient = createClient();` | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) |
+| `axios` | `http.get<T>(url, config)` on your instance, with an `AxiosRequestConfig` | `AxiosResponse<T>`; a failed status is an `AxiosError` | `export const http = axios.create();` | `axios` |
+| `fetch` | `fetch(url, init)` with a `RequestInit` | the platform's `Response`; a failed status resolves, as `fetch` does | none | nothing |
+| `angular` | a method of an `@Injectable` service per tag, over the injected `HttpClient` | an `Observable<T>`; a failed status is an `HttpErrorResponse` | none | `@angular/common`, `@angular/core`, `rxjs` |
 
-- **axios** answers like axios: its parsing, its interceptors (they see the parsed answer), an `AxiosError` on a failed status, its base URL and defaults on the instance. The result is `response.data`.
-- **Angular** answers like `HttpClient`: its parsing, its interceptors, an `HttpErrorResponse` on a failed status. The result is the body.
-- **api-client** is called straight: there is no wrapper in `client.ts`, each generated function calls `apiClient.get(…)` / `.post(…)` with api-client's own `RequestConfig`, and what it returns is api-client's own `IRes<T>` (`data`, `statusCode`, `status`, `message`, `errors`, `headers`, …). A failed status is its `ApiError` (its `throwError`, on by default); a canceled call settles with `canceled: true` unless you set it to throw. `client.ts` is one line, `export const apiClient = createClient();`, in the file you own — give it the base URL, tokens and plugins there. A header parameter is not an argument of these functions either: headers are api-client's own (`createClient({ headers })` for every request, `headers` in the config of one call). A `multipart/form-data` body is typed `FormData` and a form body `URLSearchParams` — the bodies api-client sends as they are — so you build them yourself.
-- **fetch** has no behaviour of its own to keep: `fetch` resolves on any status and parses nothing, so `client.ts` reads the answer by its `Content-Type` (JSON, text, or a `Blob`) and rejects a failed status with an `ApiResponseError` (`status`, `body`).
+`client.ts` (axios and api-client) is yours: base URL, interceptors, tokens and plugins go on the instance there. `fetch` is a function of the platform and Angular injects its `HttpClient`, so neither writes a `client.ts`; Angular's base URL is an interceptor, as in any Angular app.
 
-What the generator does decide, from the document, is the request: the filled-in route, the query string (lists repeat the key, objects are `a[b]=1`), the headers, a multipart or form-encoded body, and, for an answer that is not JSON, whether it is read as `text` or as a `Blob` (the `responseType` of the call). An aborted request ends the way the client ends it: `AbortError` for `fetch`, `CanceledError` for axios, no data for api-client.
+- **api-client**: an operation of a backend service is `apiClient.service("files").get(…)` through api-client's `services` plugin (`client.ts` is written with `services(API_SERVICE_BASE_URLS)` when the document has services; add it by hand to a `client.ts` that exists). A header parameter is not an argument of these functions — headers are api-client's own (`createClient({ headers })`, or `headers` in the config of one call). `delete` takes no body, so a `DELETE` operation with one is left out and listed.
+- **axios**: the call's config is the second-to-last argument of a body-less call, spread into the request; a query list is written the way axios writes it (`ids[]=a`) unless the instance has a `paramsSerializer`; the run lists each such parameter.
+- **fetch**: the query string is built in the function from the document's parameters (`URLSearchParams`), a JSON body is `JSON.stringify`-ed with its `Content-Type`, and reading the answer (`response.json()`) is yours.
+- **Angular**: hooks are Angular Query's (`library: "angular-query"`), and a hook injects the tag's service (`inject(PetsService)`). `HttpClient` takes no `AbortSignal`; cancel by unsubscribing from the `Observable`.
 
-`@mrzr/api-client`'s `delete` takes no body, so a `DELETE` operation with one is left out and listed (pick another `http` to send it).
+A multipart body is typed `FormData`; a form body is `URLSearchParams` (`HttpParams` for Angular) — the bodies each client sends as they are — so you build them yourself.
+
+What the generator does decide, from the document, is the request: the route (filled in), the query, the headers it declares, the body's shape and `Content-Type` where the client would otherwise label it wrongly, and `responseType` (`text` or `blob`) for an answer that is not JSON.
 
 ## Your own transport
 
@@ -233,18 +234,18 @@ The generated code asks the client for what the document describes, and reports 
 | --- | --- |
 | a `header` parameter | an argument (`headers`) of the request function, a hook argument and part of the query key; `Accept`, `Content-Type` and `Authorization` are the transport's, as OpenAPI says. With `@mrzr/api-client` it is not an argument: headers are the client's own (`createClient({ headers })`, or `headers` in the config of a call) |
 | a `cookie` parameter | reported — a browser attaches cookies itself |
-| a query list | repeated keys, `a=1&a=2` (written the same way for every client); `explode: false` and `pipeDelimited` / `spaceDelimited` are reported |
-| a query object | `a[b]=1` (deepObject); another style is reported |
-| a path list or object | `a,b` / `name,value,name,value` |
-| a body on `DELETE` | sent, from `config.body` — except by `api-client`, whose `delete` takes none: the operation is left out and listed |
+| a query list | repeated keys, `a=1&a=2`; `explode: false` and `pipeDelimited` / `spaceDelimited` are reported |
+| a query object | `a[b]=1` (deepObject), as `fetch` and axios write it; another style is reported. `HttpClient` takes no object in `params` |
+| a path parameter | `encodeURIComponent` of the value in its place in the route (a list is `a,b`) |
+| a body on `DELETE` | sent (`data` in axios, `body` in `fetch` and `HttpClient`) — except by `api-client`, whose `delete` takes none: the operation is left out and listed |
 | a body on `GET` | cannot be sent: left out with a warning |
-| `multipart/form-data` | one part per list item, a JSON part per object, a file as it is |
-| `application/x-www-form-urlencoded` | a form; a list repeats its key |
+| `multipart/form-data` | a `FormData` you build; the client sets the `Content-Type` and boundary |
+| `application/x-www-form-urlencoded` | a `URLSearchParams` (`HttpParams` for Angular) you build; the client sets the `Content-Type` |
 | `text/plain`, `application/octet-stream`, other non-JSON bodies | sent as they are, with that `Content-Type` |
-| a non-JSON answer | the call says `responseType: "text"` (for `text/*`) or `"blob"` (anything else); the client reads it its own way. `fetch` reads every answer by its `Content-Type` |
+| a non-JSON answer | the call says `responseType: "text"` (for `text/*`) or `"blob"` (anything else); the client reads it its own way. `fetch` returns the `Response` for you to read |
 | a JSON answer | the client's own parsing; nothing is unwrapped or judged by the generated code |
 
-`undefined`, `null` and `""` are left out of a query string. A header value that is not text (a number, a flag) is written with `String()`.
+Query values and the writing of an empty or `undefined` one are the client's own. A header value that is not text (a number, a flag) is written with `String()` for `fetch` and `HttpClient`, which take text.
 
 A Swagger 2.0 query list is comma separated unless its `collectionFormat` says otherwise (`csv` is the default there), so such a list is **reported** — the client repeats the key — instead of being sent differently without a word. `collectionFormat: multi` is the repeated form and needs no report.
 
@@ -252,9 +253,9 @@ A Swagger 2.0 query list is comma separated unless its `collectionFormat` says o
 
 Nothing the generated code runs touches an answer, so the types say what the client returns:
 
-- **Envelope.** If the document's answer is `{ result, code, message, data }` and the client is `@mrzr/api-client`, which takes the `data` of such an answer itself, the types and calls speak only of `data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`. With `fetch`, axios or Angular the answer is delivered whole, so its type is the whole schema (an envelope is an ordinary model there). A `result: false` is the client's to judge — a `200` with `result: false` is returned as it is. For a custom transport that unwraps on its own, `runtime.envelope` describes the shape (`false` for none).
+- **Envelope.** If the document's answer is `{ result, code, message, data }` and the client is `@mrzr/api-client`, which takes the `data` of such an answer itself, the types and calls speak only of `data`: `allOf: [EnvelopeBase, { data: T }]` becomes `ApiEnvelope<T>` in `models.ts`. With axios or Angular the answer is delivered whole, so its type is the whole schema (an envelope is an ordinary model there); with `fetch` you read the `Response` yourself. A `result: false` is the client's to judge — a `200` with `result: false` is returned as it is. For a custom transport that unwraps on its own, `runtime.envelope` describes the shape (`false` for none).
 - **Paged lists.** A `{ count, list }` payload becomes `ApiListData<T>` only when the document marks both fields `required`; otherwise it keeps its own type with optional fields, because `ApiListData` promises both are there. An API that always sends both can say so with `runtime: { list: { assumeRequired: true } }`; `runtime.list: false` turns it off.
-- **Errors.** A failed status is the client's error: an `AxiosError`, an `HttpErrorResponse`, an `ApiError` — and, for `fetch` only, an `ApiResponseError` (exported from `types.ts`) with `status` and `body`.
+- **Errors.** A failed status is the client's own: an `AxiosError`, an `HttpErrorResponse`, an `ApiError`. `fetch` resolves on any status, so a failed one is a `Response` with `ok: false`.
 - **Infinite lists** are written for a paged read whose answer *is* `{ count, list }`. When the answer is wrapped (an envelope with a client that does not unwrap it) the hook cannot be typed, so none is written and the run says so.
 
 ## Input
@@ -271,7 +272,7 @@ Give `input` a folder of documents (named after their files) or `{ name: fileOrU
 
 - Run in a terminal once to answer the questions — the answers (`main` service, `owners`) are written to `decisionsFile` and commit with the code.
 - `--check` and CI never ask; they fail listing what is still undecided.
-- Operations carry `x-service`, and `services.ts` exports `API_SERVICE_BASE_URLS` for the per-service base URL (a literal map, or a function of yours with `runtime.services.fn`).
+- Operations carry `x-service`, and `services.ts` exports `API_SERVICE_BASE_URLS` for the per-service base URL (a literal map, or a function of yours with `runtime.services.fn`). With `@mrzr/api-client` that map is handed to its `services` plugin and a call is `apiClient.service(name)`; axios gets `baseURL`, `fetch` and Angular the URL in front of the route.
 - The run prints what was merged, which owner was chosen, which operations use a component owned by another service, and which saved choices no longer apply. `--verbose` lists the identical duplicates a merge folded together.
 
 ## Types and naming

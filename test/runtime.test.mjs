@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 
 import { compileCjs, generateTo } from "./harness.mjs";
-import { multipart, payloadOf, pointClient } from "./probes/point.cjs";
+import { clientOf, multipart, payloadOf, pointClient } from "./probes/point.cjs";
 import { ok, serve } from "./server.mjs";
 
 async function load(http) {
@@ -16,7 +16,7 @@ async function load(http) {
   return {
     require,
     pets: require(join(js, "pets.js")),
-    client: require(join(js, "client.js")),
+    client: clientOf(require, join(js, "client.js")),
     types: require(join(js, "types.js")),
   };
 }
@@ -61,7 +61,12 @@ for (const http of ["fetch", "axios", "api-client"]) {
       }));
       assert.deepEqual(page, { count: 1, list: [{ id: "1", name: "Rex" }] });
       assert.equal(last().method, "GET");
-      assert.equal(last().url, "/api/v1/pets?kind=cat&ids=a&ids=b&start=0");
+      // The order of the keys is the client's own; the list repeats its key in all of them.
+      const [path, search] = last().url.split("?");
+      assert.equal(path, "/api/v1/pets");
+      // axios writes a list its own way (`ids[]=a`) unless its paramsSerializer says otherwise.
+      const key = http === "axios" ? "ids[]" : "ids";
+      assert.deepEqual([...new URLSearchParams(search)].sort(), [[key, "a"], [key, "b"], ["kind", "cat"], ["start", "0"]]);
       await api.pets.listPets({ kind: undefined, offset: undefined });
       assert.equal(last().url, "/api/v1/pets");
     });
@@ -107,8 +112,13 @@ for (const http of ["fetch", "axios", "api-client"]) {
       }
     });
 
-    test("a call's baseUrl wins over the client's", async () => {
-      const pet = payloadOf(http, await api.pets.getPet("1", { baseUrl: other.base }));
+    test("a call's own base URL wins over the client's", async (t) => {
+      // `fetch` takes no base URL: its calls start from the route.
+      if (http === "fetch") return t.skip("fetch has no base URL setting");
+      const pet = payloadOf(
+        http,
+        await api.pets.getPet("1", http === "axios" ? { baseURL: other.base } : { baseUrl: other.base }),
+      );
       assert.equal(pet.id, "other");
       assert.equal(other.seen.at(-1).url, "/api/v1/pets/1");
     });
@@ -133,12 +143,15 @@ for (const http of ["fetch", "axios", "api-client"]) {
     });
 
     test("a failing status is the client's own error", async () => {
+      // `fetch` resolves on any status: the Response is the answer, and its status is the caller's to read.
+      if (http === "fetch") {
+        const response = await api.pets.getPet("missing");
+        assert.equal(response.status, 404);
+        assert.deepEqual(response.payload, { detail: "no such pet" });
+        return;
+      }
       await assert.rejects(api.pets.getPet("missing"), (error) => {
-        if (http === "fetch") {
-          assert.ok(error instanceof api.types.ApiResponseError);
-          assert.equal(error.status, 404);
-          assert.deepEqual(error.body, { detail: "no such pet" });
-        } else if (http === "axios") {
+        if (http === "axios") {
           assert.ok(api.require("axios").isAxiosError(error));
           assert.equal(error.response.status, 404);
           assert.deepEqual(error.response.data, { detail: "no such pet" });
@@ -167,7 +180,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
         seen.push(response.data);
         return response;
       });
-      api.client.configureClient({ instance });
+      api.client.setClientForTests(instance);
       try {
         await api.pets.getPet("plain");
         // parsed by axios itself, not bytes the generator read for it

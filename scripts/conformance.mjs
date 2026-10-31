@@ -27,9 +27,11 @@ const quiet = (fn) => {
   return fn().finally(() => Object.assign(console, { log, warn }));
 };
 
-/** Every client: each library on `fetch`, and each other HTTP client once. */
+/** Every client: each library on `fetch`, and each other HTTP client once (the reactive Angular one over `HttpClient`). */
 const variants = [
-  ...LIBRARY_NAMES.map((library) => ({ library, http: "fetch" })),
+  ...LIBRARY_NAMES.filter((library) => library !== "angular-query").map((library) => ({ library, http: "fetch" })),
+  { library: "angular-query", http: "fetch" },
+  { library: "angular-query", http: "axios" },
   { library: "react-query", http: "axios" },
   { library: "react-query", http: "api-client" },
   { library: "angular-query", http: "angular" },
@@ -88,6 +90,8 @@ for (const { library, http } of variants) {
       "--noEmit",
       "--skipLibCheck",
       "--strict",
+      // Angular's `@Injectable` is a TypeScript decorator, as in every Angular project.
+      "--experimentalDecorators",
       "--noUnusedLocals",
       "--noUnusedParameters",
       "--target",

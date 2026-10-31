@@ -12,9 +12,10 @@ const load = createRequire(join(dir, "load.cjs"));
 const { createRoot, createSignal, untrack } = load("solid-js");
 const { QueryClient, QueryClientProvider } = load("@tanstack/solid-query");
 const edges = load(join(dir, "js/edges.js"));
-require("./point.cjs").pointClient(
+const { clientOf, pointClient } = require("./point.cjs");
+pointClient(
   http,
-  load(join(dir, "js/client.js")),
+  clientOf(load, join(dir, "js/client.js")),
   load,
   `${base}/api/v1`,
 );

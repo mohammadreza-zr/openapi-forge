@@ -7,7 +7,7 @@ const { join } = require("node:path");
 
 globalThis.window = globalThis;
 const [dir, port, http] = process.argv.slice(2);
-const { payloadOf } = require("./point.cjs");
+const { clientOf, payloadOf } = require("./point.cjs");
 const base = `http://127.0.0.1:${port}`;
 const load = createRequire(join(dir, "load.cjs"));
 const { createRoot, createSignal, untrack } = load("solid-js");
@@ -15,7 +15,7 @@ const { QueryClient, QueryClientProvider } = load("@tanstack/solid-query");
 const pets = load(join(dir, "js/pets.js"));
 require("./point.cjs").pointClient(
   http,
-  load(join(dir, "js/client.js")),
+  clientOf(load, join(dir, "js/client.js")),
   load,
   `${base}/api/v1`,
 );

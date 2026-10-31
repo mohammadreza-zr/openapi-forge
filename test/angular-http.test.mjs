@@ -9,7 +9,7 @@ import { bundle, generateTo, root } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
 import { ok, serve } from "./server.mjs";
 
-test("the angular client sends through HttpClient, interceptors included", async () => {
+test("the angular service sends through HttpClient, interceptors included", async () => {
   const dir = await generateTo("angular-http", {
     http: "angular",
     target: "requests",
@@ -59,7 +59,7 @@ test("the angular client sends through HttpClient, interceptors included", async
   }
 });
 
-test("the angular client reads bytes, text and payloads that look like envelopes", async () => {
+test("the angular service reads bytes, text and payloads that look like envelopes", async () => {
   const dir = await generateTo("angular-edges", {
     http: "angular",
     target: "requests",

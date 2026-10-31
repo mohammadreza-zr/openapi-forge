@@ -280,6 +280,8 @@ export interface Problem {
 
 export interface EmitResult {
   files: Map<string, string>;
+  /** The backend services the operations name (`x-service`), sorted. */
+  services: string[];
   operations: number;
   tags: number;
   problems: Problem[];

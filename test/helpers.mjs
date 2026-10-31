@@ -18,12 +18,12 @@ export const clients = () => parse(readFileSync(CLIENTS_FIXTURE, "utf8"));
 
 /**
  * Options as a run would resolve them; raw output, so no prettier is needed.
- * Most tests are about what is emitted for a client that goes through
- * `apiGet(route, config)`, so that is the default here; `http: "api-client"`
- * (the product's default, called straight on the client) is asked for by name.
+ * Most tests are about what is emitted for a client with an instance and a
+ * generic call (`http.get<T>(url, config)`), so axios is the default here;
+ * another client is asked for by name.
  */
 export const options = (patch = {}) =>
-  resolveOptions({ apiPrefix: "/api/v1", format: false, http: "fetch" }, patch);
+  resolveOptions({ apiPrefix: "/api/v1", format: false, http: "axios" }, patch);
 
 /** What the transport must get right: payloads that look like envelopes, headers, forms, bytes, lists. */
 export const EDGES_FIXTURE = fileURLToPath(

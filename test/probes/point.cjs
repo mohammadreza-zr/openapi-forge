@@ -1,37 +1,69 @@
+/** `client.ts` compiled: `fetch` and Angular's `HttpClient` have no such file. */
+function clientOf(req, file) {
+  return require("node:fs").existsSync(file) ? req(file) : undefined;
+}
+
 // Points a compiled client at a server, the way each HTTP client takes its
-// base URL and default headers: fetch in `configureClient`, axios and
-// @mrzr/api-client on the instance they are given, Angular in an interceptor.
+// base URL and default headers: axios and @mrzr/api-client on the instance they
+// are given (`client.ts` is the project's file; the harness added a setter),
+// `fetch` on the platform's function, Angular in an interceptor.
 function pointClient(http, client, req, base, headers = {}) {
   if (http === "axios") {
-    client.configureClient({
-      instance: req("axios").create({ baseURL: base, headers }),
-    });
+    client.setClientForTests(
+      req("axios").create({ baseURL: base, headers }),
+    );
   } else if (http === "api-client") {
-    // `client.ts` is the project's to edit; the harness added a setter for tests.
     client.setClientForTests(
       req("@mrzr/api-client").createClient({ baseUrl: base, headers }),
     );
   } else if (http === "fetch") {
-    client.configureClient({ baseUrl: base, headers: () => headers });
+    pointFetch(base, headers);
   }
   // Angular's HttpClient has no base URL: the probes put it in an interceptor.
 }
 
 /**
- * What a generated call resolves to, as the answer's payload: @mrzr/api-client
- * hands over its own `IRes` (the payload is `.data`), the other clients the
- * payload itself.
+ * `fetch` is the platform's function and the generated code calls it with a
+ * route, so the test points it at the server: the base goes in front of a route
+ * and the default headers go with every call. The answer is the real `Response`;
+ * the test also reads its body once, eagerly, and keeps it as `response.payload`
+ * (JSON parsed, text as it is, anything else a Blob, an empty body `null`), so a
+ * hook's `data` can be compared without waiting on a stream.
  */
-function payloadOf(http, answer) {
-  return http === "api-client" ? answer?.data : answer;
+function pointFetch(base, headers = {}) {
+  const real = (globalThis.__realFetch ??= globalThis.fetch);
+  globalThis.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" && input.startsWith("/") ? base + input : input;
+    const merged = new Headers(headers);
+    for (const [name, value] of new Headers(init.headers)) merged.set(name, value);
+    const response = await real(url, { ...init, headers: merged });
+    const type = (response.headers.get("content-type") ?? "").toLowerCase();
+    const copy = response.clone();
+    let payload;
+    if (type && !type.includes("json") && !type.startsWith("text/")) {
+      payload = await copy.blob();
+    } else {
+      const text = await copy.text();
+      payload = !text ? null : type.includes("json") ? JSON.parse(text) : text;
+    }
+    Object.defineProperty(response, "payload", { value: payload });
+    return response;
+  };
 }
 
 /**
- * A multipart body for the client: @mrzr/api-client takes the FormData itself,
- * the other built-in clients build it from the object the function is given.
+ * What a generated call resolves to, as the answer's payload: @mrzr/api-client
+ * and axios hand over their own answer (the payload is `.data`), `fetch` its
+ * `Response` (see `pointFetch`), Angular's `HttpClient` the body itself.
  */
+function payloadOf(http, answer) {
+  if (http === "api-client" || http === "axios") return answer?.data;
+  if (http === "fetch") return answer?.payload;
+  return answer;
+}
+
+/** A multipart body: every built-in client takes the FormData it is given. */
 function multipart(http, fields) {
-  if (http !== "api-client") return fields;
   const form = new FormData();
   for (const [name, value] of Object.entries(fields))
     for (const item of Array.isArray(value) ? value : [value])
@@ -39,13 +71,12 @@ function multipart(http, fields) {
   return form;
 }
 
-/** The same for application/x-www-form-urlencoded: a URLSearchParams for api-client. */
+/** The same for application/x-www-form-urlencoded: a URLSearchParams. */
 function urlencoded(http, fields) {
-  if (http !== "api-client") return fields;
   const form = new URLSearchParams();
   for (const [name, value] of Object.entries(fields))
     for (const item of Array.isArray(value) ? value : [value]) form.append(name, item);
   return form;
 }
 
-module.exports = { multipart, payloadOf, pointClient, urlencoded };
+module.exports = { clientOf, multipart, payloadOf, pointClient, urlencoded };

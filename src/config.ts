@@ -249,6 +249,18 @@ export function resolveOptions(
       `openapi-forge: http must be one of ${HTTP_CLIENTS.join(", ")}, not ${JSON.stringify(merged.http)}.`,
     );
   }
+  // Angular's requests are an injectable service over `HttpClient`, so only a
+  // hook that can inject it (Angular Query) can call them.
+  if (
+    merged.client === "builtin" &&
+    merged.http === "angular" &&
+    merged.target === "hooks" &&
+    merged.library !== "angular-query"
+  ) {
+    throw new Error(
+      `openapi-forge: http "angular" is a service over HttpClient, so its hooks are Angular Query's — use library "angular-query" (or target "requests"), not ${JSON.stringify(merged.library)}.`,
+    );
+  }
   const infinite: unknown = merged.infinite;
   if (infinite) {
     merged.infinite = {

@@ -7,7 +7,10 @@ import { BANNER, typesBase } from "./base.js";
 import { clientSource } from "./client.js";
 import { LIBRARIES } from "./libraries/index.js";
 
-export function runtimeFiles(options: ForgeOptions): Map<string, string> {
+export function runtimeFiles(
+  options: ForgeOptions,
+  services: string[] = [],
+): Map<string, string> {
   const files = new Map<string, string>();
   const hooks = options.target === "hooks";
   const library = LIBRARIES[options.library];
@@ -16,9 +19,10 @@ export function runtimeFiles(options: ForgeOptions): Map<string, string> {
   const types = hooks ? library.types(infinite) : { imports: "", body: "" };
   files.set(
     "types.ts",
-    `${BANNER}\n${types.imports}${typesBase(options.http)}${types.body}`,
+    `${BANNER}\n${types.imports}${typesBase()}${types.body}`,
   );
-  files.set("client.ts", clientSource(options.http));
+  const client = clientSource(options.http, services.length > 0);
+  if (client !== null) files.set("client.ts", client);
   if (hooks) files.set("hooks.ts", library.hooks(infinite));
   return files;
 }

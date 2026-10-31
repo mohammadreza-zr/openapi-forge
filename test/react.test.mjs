@@ -24,7 +24,7 @@ Object.defineProperty(globalThis, "navigator", {
 
 import { compileCjs, generateTo, sleep } from "./harness.mjs";
 import { EDGES_FIXTURE } from "./helpers.mjs";
-import { payloadOf, pointClient } from "./probes/point.cjs";
+import { clientOf, payloadOf, pointClient } from "./probes/point.cjs";
 import { pagesApi, petApi, serve } from "./server.mjs";
 
 describe("the React hooks", () => {
@@ -87,7 +87,7 @@ describe("the React hooks", () => {
         const js = compileCjs(dir);
         const load = createRequire(join(dir, "load.cjs"));
         api = load(join(js, "pets.js"));
-        pointClient(http, load(join(js, "client.js")), load, server.base);
+        pointClient(http, clientOf(load, join(js, "client.js")), load, server.base);
         const edgesDir = await generateTo(`${library}-${http}-edges`, {
           library,
           http,
@@ -97,7 +97,7 @@ describe("the React hooks", () => {
         const edgesJs = compileCjs(edgesDir);
         const loadEdges = createRequire(join(edgesDir, "load.cjs"));
         edges = loadEdges(join(edgesJs, "edges.js"));
-        pointClient(http, loadEdges(join(edgesJs, "client.js")), loadEdges, server.base);
+        pointClient(http, clientOf(loadEdges, join(edgesJs, "client.js")), loadEdges, server.base);
         if (library === "react-query") {
           const { QueryClient, QueryClientProvider } = load(
             "@tanstack/react-query",

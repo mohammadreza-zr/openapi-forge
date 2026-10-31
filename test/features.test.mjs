@@ -112,7 +112,7 @@ test("doctor reports a missing input and passes a good one", async () => {
 
   await writeFile(
     join(cwd, "package.json"),
-    JSON.stringify({ dependencies: { "@mrzr/api-client": "3" } }),
+    JSON.stringify({ dependencies: { axios: "1" } }),
   );
   await writeFile(join(cwd, "api.json"), JSON.stringify(paged()));
   const good = await doctor(
@@ -194,7 +194,7 @@ test("an incomplete document still emits valid types and lists what is missing",
   };
   doc.components.schemas.Loose = { type: "object", properties: { any: {} } };
   const { files, problems } = emit(doc, options(), "x");
-  assert.match(files.get("items.ts"), /apiGet<unknown>/);
+  assert.match(files.get("items.ts"), /http\.get<unknown>/);
   const text = problems
     .map((item) => `${item.where} ${item.message}`)
     .join("\n");

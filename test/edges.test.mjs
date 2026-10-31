@@ -4,6 +4,7 @@
 // parameter, a form, bytes — and each is checked twice: in the code that is
 // written, and by running it against a real server with each HTTP client.
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -40,8 +41,8 @@ describe("the code that is written", () => {
 
   test("a { count, list } payload is the list type only when both are required", () => {
     const text = edgesTs();
-    assert.match(text, /apiGet<ApiListData<string>>\(\s*edgesEndpoints\.listStrict/);
-    assert.match(text, /apiGet<ListLooseResponse>\(\s*edgesEndpoints\.listLoose/);
+    assert.match(text, /http\.get<ApiListData<string>>\(\s*edgesEndpoints\.listStrict/);
+    assert.match(text, /http\.get<ListLooseResponse>\(\s*edgesEndpoints\.listLoose/);
     assert.match(
       written().files.get("models.ts"),
       /ListLooseResponse = \{\s*count\?: number;\s*list\?: string\[\];\s*\}/,
@@ -55,11 +56,13 @@ describe("the code that is written", () => {
       /export type GetTenantHeaders = \{\s*"X-Tenant-Id": string;\s*"X-Page"\?: number;\s*\}/,
     );
     assert.match(text, /headers: GetTenantHeaders,\s*config\?/);
-    // Text headers are spread as they are; a number is written as text on the way out.
-    assert.match(text, /\.\.\.Object\.fromEntries\(\s*Object\.entries\(headers\)[\s\S]*?String\(value\)/);
+    // axios takes header values as they are and the call's own headers are kept.
+    assert.match(text, /headers: \{ \.\.\.config\?\.headers, \.\.\.headers \}/);
+    // `fetch` and HttpClient take text: a number is written as text on the way out.
+    assert.match(edgesTs({ http: "fetch" }), /requestHeaders\.set\("X-Page", String\(headers\["X-Page"\]\)\)/);
     assert.match(
-      text,
-      /listPages\([^)]*\)\s*\{[\s\S]*?headers: \{ \.\.\.config\?\.headers, \.\.\.headers \}/,
+      edgesTs({ http: "angular", library: "angular-query" }),
+      /\.\.\.Object\.fromEntries\(\s*Object\.entries\(headers\)[\s\S]*?String\(value\)/,
     );
     assert.match(text, /getTenant: \(params: GetTenantQuery, headers: GetTenantHeaders\)/);
     assert.match(text, /export function useGetTenantQuery\([^)]*headers: GetTenantHeaders/s);
@@ -78,15 +81,17 @@ describe("the code that is written", () => {
 
   test("count and list can be taken as always there, when the API is known to send both", () => {
     const text = edgesTs({ runtime: { list: { assumeRequired: true } } });
-    assert.match(text, /apiGet<ApiListData<string>>\(\s*edgesEndpoints\.listLoose/);
+    assert.match(text, /http\.get<ApiListData<string>>\(\s*edgesEndpoints\.listLoose/);
   });
 
   test("a DELETE takes its body through the config; a custom transport without a key skips it", () => {
-    const text = edgesTs({ http: "fetch" });
+    const text = edgesTs();
     // The default client, @mrzr/api-client, has a `delete` with no body.
     assert.doesNotMatch(edgesTs({ http: "api-client" }), /function remove\(/);
     assert.match(text, /export function remove\(\s*body: RemoveBody,/);
-    assert.match(text, /apiDelete<null>\(\s*edgesEndpoints\.remove,\s*\{[^}]*body: body,/s);
+    assert.match(text, /http\.delete<null>\(\s*edgesEndpoints\.remove,\s*\{[^}]*data: body/s);
+    assert.match(edgesTs({ http: "fetch" }), /method: "DELETE", headers: requestHeaders, body: JSON\.stringify\(body\)/);
+    assert.match(edgesTs({ http: "angular", library: "angular-query" }), /this\.http\.delete<null>\(edgesEndpoints\.remove, \{ body \}\)/);
     const custom = written({ client: "custom" });
     assert.doesNotMatch(custom.files.get("edges.ts"), /function remove\(/);
     assert.ok(custom.problems.some(({ message }) => /DELETE/.test(message)));
@@ -108,8 +113,12 @@ describe("the code that is written", () => {
 
   test("a body is sent as the media type the document gives it", () => {
     const text = edgesTs();
-    assert.match(text, /uploadMany[\s\S]*?isFormData: true/);
-    assert.match(text, /"Content-Type": "application\/x-www-form-urlencoded"/);
+    // A form is a FormData or a URLSearchParams: the client sees one and sets its own Content-Type.
+    assert.match(text, /uploadMany\(body\?: FormData/);
+    assert.match(text, /sendForm\(body\??: URLSearchParams/);
+    assert.match(edgesTs({ http: "angular", library: "angular-query" }), /sendForm\(body\??: HttpParams/);
+    assert.doesNotMatch(text, /isFormData|x-www-form-urlencoded/);
+    // A text body would be labelled JSON or form by default, so the document's type is named.
     assert.match(text, /"Content-Type": "text\/plain"/);
     assert.match(text, /"Content-Type": "application\/octet-stream"/);
     // A custom transport with no header key keeps the form flag it knew.
@@ -135,7 +144,8 @@ for (const http of ["fetch", "axios", "api-client"]) {
       const require = createRequire(join(dir, "load.cjs"));
       api = {
         edges: require(join(js, "edges.js")),
-        client: require(join(js, "client.js")),
+        // `fetch` is the platform's function: there is no client file.
+        client: existsSync(join(js, "client.js")) ? require(join(js, "client.js")) : undefined,
         require,
       };
       backend = await serve((request) => {
@@ -215,7 +225,8 @@ for (const http of ["fetch", "axios", "api-client"]) {
         { filter: { a: "x" }, q: "" },
         ...(http === "api-client" ? [{ headers: { "X-Tenant-Id": "t" } }] : [{ "X-Tenant-Id": "t" }]),
       );
-      assert.equal(last().url, "/api/v1/tenant?filter%5Ba%5D=x");
+      // Each client writes the query its own way: axios keeps the brackets, URLSearchParams escapes them.
+      assert.match(last().url, /^\/api\/v1\/tenant\?filter(%5B|\[)a(%5D|\])=x/);
     });
 
     test("a multipart body has a part per list item and a JSON part per object", async () => {

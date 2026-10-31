@@ -54,6 +54,33 @@ const GLOBAL_TYPES = new Set([
 
 const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "patch", "delete"];
 
+/**
+ * Names the generated code itself uses, which an operation or a path argument
+ * must not take: a function called `fetch` would call itself, a path argument
+ * called `query` would hide the query.
+ */
+const CALLED_BY_NAME = new Set([
+  "fetch",
+  "http",
+  "apiClient",
+  "encodeURIComponent",
+  "inject",
+  "firstValueFrom",
+]);
+const LOCAL_NAMES = new Set([
+  "query",
+  "body",
+  "headers",
+  "config",
+  "init",
+  "options",
+  "params",
+  "search",
+  "requestHeaders",
+  "service",
+  "signal",
+]);
+
 /** Header parameters OpenAPI says to ignore: the transport owns them. */
 const IGNORED_HEADERS = new Set(["accept", "content-type", "authorization"]);
 
@@ -73,8 +100,22 @@ export function emit(
   const hooks = options.target === "hooks";
   // `@mrzr/api-client` is called as it is: every function below calls the
   // client itself, takes its own `RequestConfig` and returns its own `IRes`.
-  const direct = options.client === "builtin" && options.http === "api-client";
-  const answerOf = (payload: string) => (direct ? `IRes<${payload}>` : payload);
+  const builtin = options.client === "builtin";
+  const direct = builtin && options.http === "api-client";
+  // The other built-in clients are called the same way: each function calls the
+  // client itself (axios, `fetch`, or an Angular service over `HttpClient`) and
+  // returns what that client returns.
+  const style = builtin ? options.http : null;
+  const service = style === "angular";
+  /** What a call resolves to, as the chosen client gives it. */
+  const answerOf = (payload: string) =>
+    style === "api-client"
+      ? `IRes<${payload}>`
+      : style === "axios"
+        ? `AxiosResponse<${payload}>`
+        : style === "fetch"
+          ? "Response"
+          : payload;
   const { prefix } = LIBRARIES[options.library];
   // A reactive library reads its arguments where the request is made, so a
   // ref, a signal or a getter in their place keeps the query in step.
@@ -123,6 +164,7 @@ export function emit(
   function typeFor(
     schema: Schema | boolean | null | undefined,
     fallbackName: string,
+    anonymous = false,
   ): string {
     // JSON Schema's `true`: any value, said on purpose (`additionalProperties: true`).
     if (schema === true) return "unknown";
@@ -141,29 +183,32 @@ export function emit(
       const seen = inlining.has(schema.$ref);
       if (seen) return "unknown";
       inlining.add(schema.$ref);
-      const text = typeFor(refTarget(schema.$ref), fallbackName);
+      const text = typeFor(refTarget(schema.$ref), fallbackName, anonymous);
       inlining.delete(schema.$ref);
       return text;
     }
     const text = schema.$ref
       ? modelName(schema.$ref)
-      : renderType(schema, fallbackName);
+      : renderType(schema, fallbackName, anonymous);
     if (schema.nullable !== true || text === "unknown" || text === "null") {
       return text;
     }
     return /[|&\s]/.test(text) ? `(${text}) | null` : `${text} | null`;
   }
 
-  function renderType(schema: Schema, fallbackName: string): string {
+  /**
+   * `anonymous` is set for a schema with no name of its own in the document —
+   * a part of an `allOf`, an option of a `oneOf`: an object there is written
+   * where it stands, not under a name the generator would have to make up.
+   */
+  function renderType(schema: Schema, fallbackName: string, anonymous = false): string {
     if (schema.oneOf?.length)
-      return joinTypes(schema.oneOf, fallbackName, "Option");
+      return joinTypes(schema.oneOf, fallbackName);
     if (schema.anyOf?.length)
-      return joinTypes(schema.anyOf, fallbackName, "Variant");
+      return joinTypes(schema.anyOf, fallbackName);
     if (schema.allOf?.length) {
       return joinTypeTexts(
-        schema.allOf.map((part, index) =>
-          typeFor(part, `${fallbackName}Part${index}`),
-        ),
+        schema.allOf.map((part) => typeFor(part, fallbackName, true)),
         " & ",
       );
     }
@@ -182,9 +227,9 @@ export function emit(
     ) {
       case undefined: {
         if (resolved.type === "null") return "null";
-        if (resolved.properties) return objectLiteral(resolved, fallbackName);
+        if (resolved.properties) return objectLiteral(resolved, fallbackName, anonymous);
         if (resolved.additionalProperties) {
-          return `Record<string, ${typeFor(resolved.additionalProperties, `${fallbackName}Value`)}>`;
+          return `Record<string, ${typeFor(resolved.additionalProperties, `${fallbackName}Value`, anonymous)}>`;
         }
         note("declares no type, so it is typed `unknown`");
         return "unknown";
@@ -202,13 +247,13 @@ export function emit(
       case "array": {
         // A fixed-length list (OpenAPI 3.1 `prefixItems`) is a tuple.
         if (resolved.prefixItems?.length) {
-          return `[${resolved.prefixItems.map((part, index) => typeFor(part, `${fallbackName}Item${index}`)).join(", ")}]`;
+          return `[${resolved.prefixItems.map((part) => typeFor(part, fallbackName, true)).join(", ")}]`;
         }
-        const item = typeFor(resolved.items, `${fallbackName}Item`);
+        const item = typeFor(resolved.items, `${fallbackName}Item`, anonymous);
         return /[|&\s]/.test(item) ? `(${item})[]` : `${item}[]`;
       }
       case "object":
-        return objectLiteral(resolved, fallbackName);
+        return objectLiteral(resolved, fallbackName, anonymous);
       default:
         note(
           `has the unsupported type \`${resolved.type}\`, so it is typed \`unknown\``,
@@ -217,15 +262,9 @@ export function emit(
     }
   }
 
-  function joinTypes(
-    nodes: Schema[],
-    fallbackName: string,
-    label: string,
-  ): string {
+  function joinTypes(nodes: Schema[], fallbackName: string): string {
     return joinTypeTexts(
-      nodes.map((node, index) =>
-        typeFor(node, `${fallbackName}${label}${index}`),
-      ),
+      nodes.map((node) => typeFor(node, fallbackName, true)),
       " | ",
     );
   }
@@ -264,13 +303,25 @@ export function emit(
     }
   }
 
-  function objectLiteral(schema: Schema, requestedName: string): string {
+  function objectLiteral(schema: Schema, requestedName: string, anonymous = false): string {
     const properties = schema.properties ?? {};
     const names = Object.keys(properties);
     if (!names.length) {
       return schema.additionalProperties
-        ? `Record<string, ${typeFor(schema.additionalProperties, `${requestedName}Value`)}>`
+        ? `Record<string, ${typeFor(schema.additionalProperties, `${requestedName}Value`, anonymous)}>`
         : "Record<string, unknown>";
+    }
+
+    if (anonymous) {
+      const required = new Set(schema.required ?? []);
+      const lines = names.map((name) => {
+        const child = properties[name] ?? {};
+        const comment = child.description
+          ? `  /** ${oneLine(child.description)} */\n`
+          : "";
+        return `${comment}  ${propertyName(name)}${required.has(name) ? "" : "?"}: ${typeFor(child, requestedName, true)};`;
+      });
+      return `{\n${lines.join("\n")}\n}`;
     }
 
     const fallbackName = claimName(schema, requestedName);
@@ -373,6 +424,7 @@ export function emit(
         const base = identifier(
           operation.operationId ?? `${method} ${path}`,
           `${method}Path${operations.length}`,
+          CALLED_BY_NAME,
         );
         // A name already in use gets the method (`getUserGet`), then a number.
         let name = base;
@@ -416,6 +468,8 @@ export function emit(
           const gap =
             item.in === "cookie"
               ? "is a cookie, which the client cannot send: a browser attaches cookies itself"
+              : item.in === "query" && !httpClientWrites(item)
+                ? "is not text, a number, a flag or a list of them, which is all HttpClient's `params` writes: it is left out"
               : item.in === "header" && !ignored && !rt.requestKeys.headers && !direct
                 ? "is a header, which the custom client takes none of (`runtime.requestKeys.headers`)"
                 : null;
@@ -450,7 +504,7 @@ export function emit(
           deprecated: operation.deprecated === true,
           pathParams: parameters.filter((item) => item.in === "path"),
           queryParams: parameters
-            .filter((item) => item.in === "query")
+            .filter((item) => item.in === "query" && httpClientWrites(item))
             .map((item) => ({
               ...item,
               name:
@@ -477,7 +531,7 @@ export function emit(
 
         const renamed = options.transform.operationName?.(built);
         if (renamed) {
-          built = { ...built, name: identifier(renamed, built.name) };
+          built = { ...built, name: identifier(renamed, built.name, CALLED_BY_NAME) };
         }
         if (options.transform.operation) {
           const changed = options.transform.operation(built);
@@ -566,10 +620,11 @@ export function emit(
     return typeFor(data, `${pascalCase(operation.name)}Response`);
   }
 
+  /** A path parameter as an argument: its own name unless that is a word the code around it uses. */
+  const pathArg = (operation: OperationInfo, item: Parameter) =>
+    identifier(item.name, `${operation.name}Path`, LOCAL_NAMES);
   const pathArgNames = (operation: OperationInfo) =>
-    operation.pathParams.map((item) =>
-      identifier(item.name, `${operation.name}Path`),
-    );
+    operation.pathParams.map((item) => pathArg(operation, item));
 
   const paramType = (parameter: Parameter) =>
     typeFor(parameter.schema, pascalCase(`${parameter.name}Param`));
@@ -591,6 +646,11 @@ export function emit(
         `is a list the document writes on one line, but the client repeats the key (\`${parameter.name}=a&${parameter.name}=b\`)`,
       );
     }
+    if (style === "axios" && schema.type === "array") {
+      note(
+        `is a list, which axios writes as \`${parameter.name}[]=a&${parameter.name}[]=b\` unless its \`paramsSerializer\` says otherwise (set it on the instance in \`client.ts\`)`,
+      );
+    }
     if (
       (schema.type === "object" || (!schema.type && schema.properties)) &&
       parameter.style !== "deepObject"
@@ -599,6 +659,24 @@ export function emit(
         `is an object, which the client writes as \`${parameter.name}[property]=value\` (deepObject)`,
       );
     }
+  }
+
+  /**
+   * Angular's `HttpClient` writes `params` of text, numbers, flags and lists of
+   * them — no object, no file. A shape the document leaves open (a union, an
+   * enum with no type) is let through: only what is plainly an object or a
+   * file is left out.
+   */
+  function httpClientWrites(parameter: Parameter) {
+    if (!service) return true;
+    const plain = (node: Schema | undefined): boolean => {
+      const schema = deref(node);
+      if (schema.format === "binary") return false;
+      if (schema.type === "object" || schema.properties) return false;
+      if (schema.type === "array") return plain(schema.items);
+      return true;
+    };
+    return plain(parameter.schema);
   }
 
   const queryTypeName = (operation: OperationInfo) => `${pascalCase(operation.name)}Query`;
@@ -613,12 +691,13 @@ export function emit(
     `${pascalCase(operation.name)}Variables`;
   const bodyTypeName = (operation: OperationInfo) => {
     const type = typeFor(operation.bodySchema, `${pascalCase(operation.name)}Body`);
-    // @mrzr/api-client takes a multipart or form body as the object it sends: a
+    // A built-in client takes a multipart or form body as the object it sends: a
     // FormData or a URLSearchParams, not a plain object it would write as JSON.
-    if (direct) {
+    if (builtin) {
       const kind = bodyKind(operation.bodyMediaType);
       if (kind === "multipart") return "FormData";
-      if (kind === "urlencoded") return "URLSearchParams";
+      // HttpClient does not send a URLSearchParams as a form; its own form body is HttpParams.
+      if (kind === "urlencoded") return service ? "HttpParams" : "URLSearchParams";
     }
     return type;
   };
@@ -629,12 +708,17 @@ export function emit(
    * the values are written with `String()` here, so a transport that types
    * its headers `Record<string, string>` takes them as they are.
    */
-  function headerSpread(operation: OperationInfo) {
+  function headerSpread(operation: OperationInfo, takesScalars = false, filters = false) {
+    // axios takes a number or a flag as a header value; `fetch` and HttpClient take text.
     const isText = (type: string) =>
-      /^(string|"[^"]*"(\s\|\s"[^"]*")*)$/.test(type);
+      (takesScalars
+        ? /^(string|number|boolean|"[^"]*"(\s\|\s"[^"]*")*|-?\d+(\s\|\s-?\d+)*)$/
+        : /^(string|"[^"]*"(\s\|\s"[^"]*")*)$/
+      ).test(type);
     // Text headers go as they are. One that is not text (a number, a flag, a
     // list) cannot be a header value as typed, so it is written with `String()`.
-    if (operation.headerParams.every((item) => isText(paramType(item)))) {
+    // HttpClient reads the length of every value, so an `undefined` one has to be filtered out.
+    if (!filters && operation.headerParams.every((item) => isText(paramType(item)))) {
       return "...headers";
     }
     return [
@@ -675,6 +759,38 @@ export function emit(
     reactive ? `() => ${expression}` : expression;
 
   /**
+   * A hook's call of its request: the function with a signal for the client to
+   * cancel with, or — with Angular, whose `HttpClient` answers an `Observable`
+   * and takes no signal — the service's method read once.
+   */
+  function callOf(operation: OperationInfo, args: string[]) {
+    if (service) {
+      return `firstValueFrom(service.${operation.name}(${args.join(", ")}))`;
+    }
+    const signal = rt.requestKeys.signal;
+    const signalArg = signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
+    return `${operation.name}(${[...args, signalArg].join(", ")})`;
+  }
+
+  /** The line that gets a tag's service in a hook, which runs in an injection context. */
+  const serviceLine = (keys: string) =>
+    service ? [`  const service = inject(${serviceClass(keys)});`] : [];
+  const serviceClass = (keys: string) =>
+    `${pascalCase(keys.replace(/Keys$/, ""))}Service`;
+
+  /**
+   * An infinite page is read from the payload of the answer: `response.data`
+   * for the clients that wrap it, `response.json()` for `fetch`'s own `Response`.
+   * Paging has to read the list, so this is the one place an answer is opened.
+   */
+  const pageOf = (type: string) =>
+    style === "api-client" || style === "axios"
+      ? `.then((response) => response.data as ${type})`
+      : style === "fetch"
+        ? `.then((response) => response.json() as Promise<${type}>)`
+        : "";
+
+  /**
    * A read is an infinite list when it answers the paged shape and takes both
    * paging parameters; the query it is given is the rest of its parameters.
    */
@@ -713,7 +829,6 @@ export function emit(
   function infiniteHookBlock(operation: OperationInfo, keys: string) {
     const { item, omit, optional, headers } = infiniteOf(operation)!;
     const { start, size } = infinite as { start: string; size: string };
-    const signal = rt.requestKeys.signal;
     return [
       requestDoc(operation),
       `export function ${prefix}${pascalCase(operation.name)}InfiniteQuery(`,
@@ -723,12 +838,37 @@ export function emit(
         : []),
       `  options?: ${rt.types.infinite}<${item}, ReturnType<typeof ${keys}.${infiniteKey(operation)}>>,`,
       `) {`,
+      ...serviceLine(keys),
       `  return ${rt.hooks.infinite}(`,
       `    ${lazy(`${keys}.${infiniteKey(operation)}(${argRead("query")}${headers ? `, ${argRead("headers")}` : ""})`)},`,
-      `    (page, signal) =>`,
-      `      ${operation.name}({ ...${argRead("query")}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }, ${headers ? `${argRead("headers")}, ` : ""}{ ${signal === "signal" ? "signal" : `${signal}: signal`} })${direct ? `.then((response) => response.data as ${list && list.name}<${item}>)` : ""},`,
+      `    (page${service ? "" : ", signal"}) =>`,
+      `      ${callOf(operation, [`{ ...${argRead("query")}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }`, ...(headers ? [argRead("headers")] : [])])}${pageOf(`${list && list.name}<${item}>`)},`,
       `    options,`,
       `  );`,
+      `}`,
+    ].join("\n");
+  }
+
+  /** The Angular service of a tag: `HttpClient` injected, one method per operation. */
+  function serviceClassBlock(
+    tag: string,
+    keys: string,
+    operations: OperationInfo[],
+    endpoints: string,
+  ) {
+    const methods = operations
+      .map((operation) => requestBlock(operation, endpoints))
+      .join("\n\n");
+    return [
+      `/** The requests of "${tag}". */`,
+      `@Injectable({ providedIn: "root" })`,
+      `export class ${serviceClass(keys)} {`,
+      `  private readonly http = inject(HttpClient);`,
+      ``,
+      methods
+        .split("\n")
+        .map((line) => (line ? `  ${line}` : line))
+        .join("\n"),
       `}`,
     ].join("\n");
   }
@@ -766,9 +906,11 @@ export function emit(
         undefined,
         true,
       ).join("\n\n"),
-      operations
-        .map((operation) => requestBlock(operation, endpoints))
-        .join("\n\n"),
+      service
+        ? serviceClassBlock(tag, keys, operations, endpoints)
+        : operations
+            .map((operation) => requestBlock(operation, endpoints))
+            .join("\n\n"),
       hooks
         ? reads
             .flatMap((operation) => [
@@ -798,6 +940,20 @@ export function emit(
         body.includes(`${name}<`),
       );
       lines.push(`import type { ${fromClient.join(", ")} } from "@mrzr/api-client";`);
+    } else if (style === "axios") {
+      lines.push(`import { http } from "${rt.callers.module}";`);
+      const fromAxios = ["AxiosRequestConfig", "AxiosResponse"].filter((name) =>
+        new RegExp(`\\b${name}\\b`).test(body),
+      );
+      lines.push(`import type { ${fromAxios.join(", ")} } from "axios";`);
+    } else if (service) {
+      lines.push(
+        `import { ${["HttpClient", ...(/\bHttpParams\b/.test(body) ? ["HttpParams"] : [])].join(", ")} } from "@angular/common/http";`,
+      );
+      lines.push(`import { Injectable, inject } from "@angular/core";`);
+      if (body.includes("firstValueFrom(")) lines.push(`import { firstValueFrom } from "rxjs";`);
+    } else if (style === "fetch") {
+      // `fetch` is the platform's: nothing to import for the call itself.
     } else {
       const callers = [
         ...new Set(operations.map((item) => rt.callers[item.method])),
@@ -832,11 +988,12 @@ export function emit(
     if (runtime.length) {
       lines.push(`import { ${runtime.join(", ")} } from "${rt.hooks.module}";`);
     }
-    if (operations.some((operation) => operation.service)) {
+    // api-client takes its services from its plugin, not from this module.
+    if (!direct && operations.some((operation) => operation.service)) {
       lines.push(`import { API_SERVICE_BASE_URLS } from "./services";`);
     }
     const types = [
-      ...(direct ? [] : [rt.types.request]),
+      ...(builtin ? [] : [rt.types.request]),
       ...(listWithTypes ? [list.name] : []),
       ...(usesInfinite ? [rt.types.infinite] : []),
       ...(usesQuery ? [rt.types.query] : []),
@@ -905,7 +1062,7 @@ export function emit(
           ...(isDetail
             ? operation.pathParams.map(
                 (item) =>
-                  `${identifier(item.name, `${operation.name}Path`)}: ${paramType(item)}`,
+                  `${pathArg(operation, item)}: ${paramType(item)}`,
               )
             : []),
           ...inputs.map(
@@ -965,7 +1122,7 @@ export function emit(
     if (!hooks) return "";
     const parts = operation.pathParams.map(
       (item) =>
-        `${identifier(item.name, `${operation.name}Path`)}: ${paramType(item)}`,
+        `${pathArg(operation, item)}: ${paramType(item)}`,
     );
     if (operation.queryParams.length) {
       const required = operation.queryParams.some((item) => item.required);
@@ -997,7 +1154,7 @@ export function emit(
     const payload = payloadFor(operation);
     const args = operation.pathParams.map(
       (item) =>
-        `${identifier(item.name, `${operation.name}Path`)}: ${paramType(item)}`,
+        `${pathArg(operation, item)}: ${paramType(item)}`,
     );
     if (operation.queryParams.length) {
       args.push(
@@ -1031,25 +1188,19 @@ export function emit(
     // The client knows a FormData, a URLSearchParams and a Blob when it sees one
     // and sets their Content-Type itself; only a text body, which it would
     // label JSON, is told what the document says.
-    const kind = bodyKind(operation.bodyMediaType);
-    const headerEntries =
-      kind === "raw"
-        ? [`"Content-Type": ${JSON.stringify(operation.bodyMediaType)}`]
-        : [];
-    if (headerEntries.length) {
-      configLines.push(`headers: { ...config?.headers, ${headerEntries.join(", ")} }`);
-    }
-    const answer = operation.responseMediaType;
-    if (answer && !answer.includes("json")) {
+    const contentType = contentTypeOf(operation);
+    if (contentType) {
       configLines.push(
-        `responseType: ${JSON.stringify(answer.startsWith("text/") ? "text" : "blob")}`,
+        `headers: { ...config?.headers, "Content-Type": ${JSON.stringify(contentType)} }`,
       );
     }
-    if (operation.service) {
-      configLines.push(
-        `baseUrl: config?.baseUrl ?? API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}]`,
-      );
-    }
+    const responseType = responseTypeOf(operation);
+    if (responseType) configLines.push(`responseType: ${JSON.stringify(responseType)}`);
+    // A service of its own is api-client's `services` plugin: its base URL, session
+    // and defaults are the plugin's, so nothing about it is written here.
+    const receiver = operation.service
+      ? `apiClient.service(${JSON.stringify(operation.service)})`
+      : "apiClient";
 
     const callArgs = [endpointRef(endpoints, operation)];
     if (["post", "put", "patch"].includes(operation.method)) {
@@ -1061,22 +1212,197 @@ export function emit(
     return [
       requestDoc(operation),
       `export function ${operation.name}(${args.join(", ")}) {`,
-      `  return apiClient.${operation.method}<${payload}>(`,
+      `  return ${receiver}.${operation.method}<${payload}>(`,
       `    ${callArgs.join(",\n    ")},`,
       `  );`,
       `}`,
     ].join("\n");
   }
 
+  /** How the client should read an answer that is not JSON: as text or as a `Blob`. */
+  function responseTypeOf(operation: OperationInfo): "text" | "blob" | null {
+    const answer = operation.responseMediaType;
+    if (!answer || answer.includes("json")) return null;
+    return answer.startsWith("text/") ? "text" : "blob";
+  }
+
+  /**
+   * The `Content-Type` the generated code names. A multipart or form body is
+   * left to the client, which knows its boundary and its encoding; JSON is what
+   * a client writes by default, so only another JSON type (`application/vnd.api+json`)
+   * is named; text and bytes are named, or the client would label them its own.
+   */
+  function contentTypeOf(operation: OperationInfo): string | null {
+    const media = operation.bodyMediaType;
+    if (!media || media.includes("*")) return null;
+    const kind = bodyKind(media);
+    if (kind === "raw") return media;
+    if (kind === "json" && media !== "application/json") return media;
+    return null;
+  }
+
+  /** The route with its `{name}` filled in, each value written as a path segment. */
+  function filledRoute(operation: OperationInfo, endpoints: string) {
+    const plain = /^(string|number|"[^"]*"( \| "[^"]*")*|-?\d+( \| -?\d+)*)$/;
+    return operation.pathParams.reduce((route, item, index) => {
+      const argument = pathArgNames(operation)[index];
+      const value = plain.test(paramType(item)) ? argument : `String(${argument})`;
+      return `${route}.replace(${JSON.stringify(`{${item.name}}`)}, encodeURIComponent(${value}))`;
+    }, endpointRef(endpoints, operation));
+  }
+
+  /** `object.key`, or `object["key"]` when the key is no identifier. */
+  const member = (object: string, key: string) =>
+    /^[A-Za-z_$][\w$]*$/.test(key)
+      ? `${object}.${key}`
+      : `${object}[${JSON.stringify(key)}]`;
+
+  /** A call on axios, `fetch` or Angular's `HttpClient`, with only what the document asks for. */
+  function nativeRequestBlock(operation: OperationInfo, endpoints: string) {
+    const payload = payloadFor(operation);
+    const args = operation.pathParams.map(
+      (item) =>
+        `${pathArg(operation, item)}: ${paramType(item)}`,
+    );
+    if (operation.queryParams.length) {
+      args.push(
+        `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
+      );
+    }
+    if (operation.headerParams.length) {
+      args.push(
+        `headers: ${headersTypeName(operation)}${headersAreOptional(operation) ? " = {}" : ""}`,
+      );
+    }
+    if (operation.bodySchema) {
+      args.push(
+        `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
+      );
+    }
+    if (style === "axios") args.push("config?: AxiosRequestConfig");
+    if (style === "fetch") args.push("init?: RequestInit");
+
+    const kind = bodyKind(operation.bodyMediaType);
+    // JSON needs no header for axios and HttpClient, which write it; `fetch` is told below.
+    const contentType = contentTypeOf(operation);
+    const responseType = responseTypeOf(operation);
+    const base = operation.service
+      ? `API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}]`
+      : null;
+    const hasBody = Boolean(operation.bodySchema);
+    const withBody = ["post", "put", "patch"].includes(operation.method);
+    const route = filledRoute(operation, endpoints);
+    const lines: string[] = [];
+    const indent = (text: string, by = "  ") =>
+      text.split("\n").map((line) => by + line).join("\n");
+
+    if (style === "fetch") {
+      if (operation.queryParams.length) {
+        lines.push("const params = new URLSearchParams();");
+        for (const item of operation.queryParams) {
+          const schema = deref(item.schema);
+          const value = member("query", item.name);
+          const key = JSON.stringify(item.name);
+          if (schema.type === "array") {
+            lines.push(
+              `for (const item of ${value}${item.required ? "" : " ?? []"}) params.append(${key}, String(item));`,
+            );
+          } else if (schema.type === "object" || (!schema.type && schema.properties)) {
+            lines.push(
+              `for (const [name, item] of Object.entries(${value}${item.required ? "" : " ?? {}"})) params.append(${key} + "[" + name + "]", String(item));`,
+            );
+          } else if (item.required) {
+            lines.push(`params.append(${key}, String(${value}));`);
+          } else {
+            lines.push(
+              `if (${value} !== undefined) params.append(${key}, String(${value}));`,
+            );
+          }
+        }
+        lines.push("const search = params.toString();");
+      }
+      // `fetch` writes no JSON of its own: the body is stringified and named.
+      const named = hasBody && kind === "json" ? (contentType ?? "application/json") : contentType;
+      const needsHeaders = operation.headerParams.length > 0 || Boolean(named);
+      if (needsHeaders) {
+        lines.push("const requestHeaders = new Headers(init?.headers);");
+        // A Content-Type the caller gave in `init` wins over the document's.
+        if (named) {
+          lines.push(
+            `if (!requestHeaders.has("Content-Type")) requestHeaders.set("Content-Type", ${JSON.stringify(named)});`,
+          );
+        }
+        for (const item of operation.headerParams) {
+          const value = member("headers", item.name);
+          lines.push(
+            `if (${value} !== undefined) requestHeaders.set(${JSON.stringify(item.name)}, String(${value}));`,
+          );
+        }
+      }
+      const url = [base, route].filter(Boolean).join(" + ");
+      const init = [
+        "...init",
+        ...(operation.method === "get" ? [] : [`method: ${JSON.stringify(operation.method.toUpperCase())}`]),
+        ...(needsHeaders ? ["headers: requestHeaders"] : []),
+        ...(hasBody
+          ? [`body: ${kind === "json" ? "JSON.stringify(body)" : "body"}`]
+          : []),
+      ];
+      lines.push(
+        `return fetch(${url}${operation.queryParams.length ? ' + (search ? "?" + search : "")' : ""}, { ${init.join(", ")} });`,
+      );
+      return [
+        requestDoc(operation),
+        `export function ${operation.name}(${args.join(", ")}) {`,
+        ...lines.map((line) => indent(line)),
+        `}`,
+      ].join("\n");
+    }
+
+    const headerLines: string[] = [];
+    if (operation.headerParams.length) {
+      headerLines.push(headerSpread(operation, style === "axios"));
+    }
+    if (contentType) headerLines.push(`"Content-Type": ${JSON.stringify(contentType)}`);
+
+    // axios: the instance, its config, its answer.
+    {
+      const config = [
+        "...config",
+        ...(operation.queryParams.length ? ["params: query"] : []),
+        ...(headerLines.length ? [`headers: { ...config?.headers, ${headerLines.join(", ")} }`] : []),
+        ...(responseType ? [`responseType: ${JSON.stringify(responseType)}`] : []),
+        ...(operation.method === "delete" && hasBody ? ["data: body"] : []),
+        ...(base ? [`baseURL: config?.baseURL ?? ${base}`] : []),
+      ];
+      const call = [
+        route,
+        ...(withBody ? [hasBody ? "body" : "undefined"] : []),
+        // Nothing of the document's to add: the caller's config goes as it is.
+        config.length === 1 ? "config" : `{\n${config.map((line) => `    ${line}`).join(",\n")},\n  }`,
+      ];
+      return [
+        requestDoc(operation),
+        `export function ${operation.name}(${args.join(", ")}) {`,
+        `  return http.${operation.method}<${payload}>(`,
+        `    ${call.join(",\n    ")},`,
+        `  );`,
+        `}`,
+      ].join("\n");
+    }
+  }
+
   function requestBlock(operation: OperationInfo, endpoints: string) {
     if (direct) return directRequestBlock(operation, endpoints);
+    if (style === "axios" || style === "fetch") return nativeRequestBlock(operation, endpoints);
+    if (service) return serviceMethod(operation, endpoints);
     const payload = payloadFor(operation);
     const caller = rt.callers[operation.method];
     const keys = rt.requestKeys;
 
     const args = operation.pathParams.map(
       (item) =>
-        `${identifier(item.name, `${operation.name}Path`)}: ${paramType(item)}`,
+        `${pathArg(operation, item)}: ${paramType(item)}`,
     );
     if (operation.queryParams.length) {
       args.push(
@@ -1164,6 +1490,62 @@ export function emit(
     ].join("\n");
   }
 
+  /** One method of a tag's Angular service: `HttpClient`'s own call, answering what it answers. */
+  function serviceMethod(operation: OperationInfo, endpoints: string) {
+    const payload = payloadFor(operation);
+    const args = operation.pathParams.map(
+      (item) =>
+        `${pathArg(operation, item)}: ${paramType(item)}`,
+    );
+    if (operation.queryParams.length) {
+      args.push(
+        `query: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
+      );
+    }
+    if (operation.headerParams.length) {
+      args.push(
+        `headers: ${headersTypeName(operation)}${headersAreOptional(operation) ? " = {}" : ""}`,
+      );
+    }
+    if (operation.bodySchema) {
+      args.push(
+        `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
+      );
+    }
+    const contentType = contentTypeOf(operation);
+    const responseType = responseTypeOf(operation);
+    const hasBody = Boolean(operation.bodySchema);
+    const headerEntries = [
+      ...(operation.headerParams.length ? [headerSpread(operation, false, true)] : []),
+      ...(contentType ? [`"Content-Type": ${JSON.stringify(contentType)}`] : []),
+    ];
+    const base = operation.service
+      ? `API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}] + `
+      : "";
+    const options = [
+      ...(operation.queryParams.length ? ["params: query"] : []),
+      ...(headerEntries.length ? [`headers: { ${headerEntries.join(", ")} }`] : []),
+      ...(responseType ? [`responseType: ${JSON.stringify(responseType)}`] : []),
+      ...(operation.method === "delete" && hasBody ? ["body"] : []),
+    ];
+    const url = base + filledRoute(operation, endpoints);
+    const call = [
+      url,
+      ...(["post", "put", "patch"].includes(operation.method)
+        ? [hasBody ? "body" : "undefined"]
+        : []),
+      ...(options.length ? [`{ ${options.join(", ")} }`] : []),
+    ];
+    // HttpClient types a text or Blob answer by `responseType`, not by a type argument.
+    const generic = responseType ? "" : `<${payload}>`;
+    return [
+      requestDoc(operation),
+      `${operation.name}(${args.join(", ")}) {`,
+      `  return this.http.${operation.method}${generic}(${call.join(", ")});`,
+      `}`,
+    ].join("\n");
+  }
+
   function requestDoc(operation: OperationInfo) {
     const prose = [operation.summary, operation.description]
       .filter(Boolean)
@@ -1182,7 +1564,7 @@ export function emit(
     const payload = payloadFor(operation);
     const params = operation.pathParams.map(
       (item) =>
-        `${identifier(item.name, `${operation.name}Path`)}: ${argType(paramType(item))}`,
+        `${pathArg(operation, item)}: ${argType(paramType(item))}`,
     );
     if (operation.queryParams.length) {
       params.push(
@@ -1212,16 +1594,14 @@ export function emit(
       ...pathArgNames(operation).map((item) => argRead(item)),
       ...inputs,
     ];
-    const signal = rt.requestKeys.signal;
-    const signalArg =
-      signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
 
     return [
       requestDoc(operation),
       `export function ${prefix}${pascalCase(operation.name)}Query(${params.join(", ")}) {`,
+      ...serviceLine(keys),
       `  return ${rt.hooks.query}(`,
       `    ${lazy(`${keys}.${operation.name}(${keyArgs})`)},`,
-      `    (signal) => ${operation.name}(${callArgs.length ? `${callArgs.join(", ")}, ` : ""}${signalArg}),`,
+      `    (${service ? "" : "signal"}) => ${callOf(operation, callArgs)},`,
       `    options,`,
       `  );`,
       `}`,
@@ -1237,21 +1617,20 @@ export function emit(
       operation.bodySchema,
     );
     const variablesType = hasVariables ? variablesTypeName(operation) : "void";
-    const signal = rt.requestKeys.signal;
-    const signalArg =
-      signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
+    const signalSlot = service ? "" : ", signal";
 
     const lines = [
       requestDoc(operation),
       `export function ${prefix}${pascalCase(operation.name)}Mutation(`,
       `  options?: ${rt.types.mutation}<${answerOf(payload)}, ${variablesType}>,`,
       `) {`,
+      ...serviceLine(keys),
       `  return ${rt.hooks.mutation}(${keys}.all,`,
     ];
 
     if (!hasVariables) {
       lines.push(
-        `    (_variables, signal) => ${operation.name}(${signalArg}),`,
+        `    (_variables${signalSlot}) => ${callOf(operation, [])},`,
       );
     } else {
       const slots = [...pathArgNames(operation)];
@@ -1269,10 +1648,9 @@ export function emit(
         slots.push("body");
         callArgs.push("body");
       }
-      const renderedCallArgs = [...callArgs, signalArg].join(", ");
       lines.push(
-        `    ({ ${slots.join(", ")} }, signal) =>`,
-        `      ${operation.name}(${renderedCallArgs}),`,
+        `    ({ ${slots.join(", ")} }${signalSlot}) =>`,
+        `      ${callOf(operation, callArgs)},`,
       );
     }
 
@@ -1390,7 +1768,7 @@ export function emit(
     const envelopePayload = envelopeDataPayload(schema, name);
     if (envelope && envelopePayload) {
       // Walk only the data property to register nested inline models, avoiding
-      // the creation of Part1 types for the envelope structure itself.
+      // the creation of types for the envelope structure itself.
       const [, narrowing] = schema.allOf ?? [];
       if (envelope && narrowing?.properties?.[envelope.data]) {
         typeFor(narrowing.properties[envelope.data], `${name}Data`);
@@ -1562,6 +1940,7 @@ export function emit(
   );
   return {
     files,
+    services,
     operations: count,
     tags: byTag.size,
     problems: [...problems.values()],
