@@ -46,20 +46,16 @@ export const baseUrl: string = import.meta.env.${env} ?? "";
     packages: [],
   },
   axios: {
-    file: ({ main, env }) => `import axios from "axios";
+    // Always on the instance: it is the default of every call that names no
+    // base URL of its own, whether the generated code or yours.
+    file: ({ env }) => `import axios from "axios";
 
 /**
  * The instance every generated call goes through. This file is yours: interceptors,
- * adapters and defaults belong here.${
-   main
-     ? `
- * The routes are written without the API's prefix, which the base URL carries
- * (${env}=https://host/api/v1).`
-     : `
- * Every operation names a service of its own, whose base URL is the call's.`
- }
+ * adapters and defaults belong here. The routes are written without the API's
+ * prefix, which the base URL carries (${env}=https://host/api/v1).
  */
-export const http = axios.create(${main ? `{ baseURL: import.meta.env.${env} }` : ""});
+export const http = axios.create({ baseURL: import.meta.env.${env} });
 `,
     packages: ["axios"],
   },

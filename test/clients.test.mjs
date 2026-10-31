@@ -209,9 +209,9 @@ test("the base URL of client.ts is written only where a call starts from it", ()
     assert.match(written(http, { services: [], main: true }).get("client.ts"), /export const baseUrl/, http);
     assert.equal(written(http, everyOperationIsAService).has("client.ts"), false, http);
   }
-  // axios keeps its instance, but names no base URL it would never use.
-  assert.match(written("axios", { services: [], main: true }).get("client.ts"), /baseURL: import\.meta\.env\.VITE_API_URL/);
-  assert.match(written("axios", everyOperationIsAService).get("client.ts"), /export const http = axios\.create\(\);/);
+  // axios always has it on the instance: the default of every call that names no base URL of its own.
+  for (const layer of [{ services: [], main: true }, everyOperationIsAService])
+    assert.match(written("axios", layer).get("client.ts"), /axios\.create\(\{ baseURL: import\.meta\.env\.VITE_API_URL \}\)/);
 });
 
 test("no client keeps a wrapper: each one is called as it is", () => {
