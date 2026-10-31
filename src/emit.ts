@@ -1987,6 +1987,7 @@ export function emit(
   return {
     files,
     services,
+    main: [...byTag.values()].some((items) => items.some((item) => !item.service)),
     operations: count,
     tags: byTag.size,
     problems: [...problems.values()],

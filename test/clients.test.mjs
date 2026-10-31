@@ -188,16 +188,30 @@ test("http picks what the built-in client sends with; the default is @mrzr/api-c
   const fetchFiles = () => runtimeFiles(resolveOptions({ http: "fetch", target: "requests" }));
   // axios and @mrzr/api-client have an instance the project owns; fetch is the
   // platform's function and Angular injects its HttpClient, so neither has a file.
-  assert.match(files("axios").get("client.ts"), /export const http = axios\.create\(\{ baseURL: baseUrlFromEnv\(\) \}\);/);
+  assert.match(files("axios").get("client.ts"), /export const http = axios\.create\(\{ baseURL: import\.meta\.env\.VITE_API_URL \}\);/);
   assert.match(files("api-client").get("client.ts"), /createClient\(\)/);
   // fetch and Angular's HttpClient have no instance to own, but they cannot find
   // their base URL either: `client.ts` exports the one read from the environment.
-  assert.match(fetchFiles().get("client.ts"), /export const baseUrl = baseUrlFromEnv\(\);/);
-  assert.match(files("angular", { library: "angular-query" }).get("client.ts"), /export const baseUrl = baseUrlFromEnv\(\);/);
-  // Every client reads it from the same variables; api-client finds its own.
+  assert.match(fetchFiles().get("client.ts"), /export const baseUrl: string = import\.meta\.env\.VITE_API_URL \?\? "";/);
+  assert.match(files("angular", { library: "angular-query" }).get("client.ts"), /export const baseUrl: string = import\.meta\.env\.VITE_API_URL \?\? "";/);
+  // Every client reads one variable, each in its own way; api-client finds its own.
   for (const http of ["axios", "fetch", "angular"])
-    assert.match(runtimeFiles(resolveOptions({ http, target: "requests" })).get("client.ts"), /"VITE_API_URL"/, http);
-  assert.doesNotMatch(files("api-client").get("client.ts"), /baseUrlFromEnv/);
+    assert.match(runtimeFiles(resolveOptions({ http, target: "requests" })).get("client.ts"), /import\.meta\.env\.VITE_API_URL/, http);
+  assert.doesNotMatch(files("api-client").get("client.ts"), /import\.meta|process\.env/);
+});
+
+test("the base URL of client.ts is written only where a call starts from it", () => {
+  const written = (http, layer) =>
+    runtimeFiles(resolveOptions({ http, target: "requests" }), layer);
+  const everyOperationIsAService = { services: ["files", "search"], main: false };
+  // fetch and Angular export a `baseUrl` for the calls of no service; with none, there is no file.
+  for (const http of ["fetch", "angular"]) {
+    assert.match(written(http, { services: [], main: true }).get("client.ts"), /export const baseUrl/, http);
+    assert.equal(written(http, everyOperationIsAService).has("client.ts"), false, http);
+  }
+  // axios keeps its instance, but names no base URL it would never use.
+  assert.match(written("axios", { services: [], main: true }).get("client.ts"), /baseURL: import\.meta\.env\.VITE_API_URL/);
+  assert.match(written("axios", everyOperationIsAService).get("client.ts"), /export const http = axios\.create\(\);/);
 });
 
 test("no client keeps a wrapper: each one is called as it is", () => {

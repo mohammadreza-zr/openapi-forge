@@ -180,7 +180,7 @@ export async function generate(
   // The runtime is the project's to edit: write it only when it is missing.
   const written = [...files.keys()];
   if (options.client === "builtin") {
-    const runtime = await formatFiles(runtimeFiles(options, emitted.services), {
+    const runtime = await formatFiles(runtimeFiles(options, { services: emitted.services, main: emitted.main }), {
       cwd,
       outDir,
       format: options.format,

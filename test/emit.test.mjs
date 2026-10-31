@@ -151,9 +151,11 @@ test("several services mark operations with their base URL", () => {
   // @mrzr/api-client keeps a service of its own in its `services` plugin: the call names the service, nothing else.
   const apiClient = emit(spec, options({ http: "api-client" }), "x");
   assert.deepEqual(apiClient.services, ["owners", "pets"]);
+  assert.equal(apiClient.main, false); // every operation names its service
+  assert.equal(emit(petstore(), options({}), "x").main, true);
   assert.match(apiClient.files.get("pets.ts"), /apiClient\.service\("pets"\)\.get</);
   assert.doesNotMatch(apiClient.files.get("pets.ts"), /baseUrl|API_SERVICE_BASE_URLS/);
-  const withServices = runtimeFiles(resolveOptions({ http: "api-client" }), ["owners", "pets"]).get("client.ts");
+  const withServices = runtimeFiles(resolveOptions({ http: "api-client" }), { services: ["owners", "pets"], main: false }).get("client.ts");
   assert.match(withServices, /import \{ services \} from "@mrzr\/api-client\/services"/);
   assert.match(withServices, /plugins: \[services\(API_SERVICE_BASE_URLS\)\]/);
   assert.doesNotMatch(runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts"), /services/);

@@ -3,89 +3,61 @@
 // calls the client itself, with the client's own config, returning the client's
 // own answer: nothing is parsed, unwrapped or re-thrown on the way.
 //
-// Where the API lives is read from the environment by every client.
-// @mrzr/api-client finds its own base URL; axios, `fetch` and Angular's
-// `HttpClient` cannot, so their `client.ts` reads it the same way (below).
+// Where the API lives is read from the environment by every client, in its own
+// way: @mrzr/api-client finds it itself (it reads VITE_API_URL, among others);
+// axios takes it as `baseURL`, and `fetch` and Angular's `HttpClient`, which have
+// nothing to hold it, start every call from the `baseUrl` this file exports.
 import type { HttpClientName } from "../types.js";
 import { BANNER } from "./base.js";
 
+/** What the layer being written needs of its `client.ts`. */
+export interface Layer {
+  /** More than one backend service: the client names them (api-client's `services` plugin). */
+  services: boolean;
+  /** Some operation belongs to no service: it starts from the client's own base URL. */
+  main: boolean;
+}
+
 interface Transport {
-  /** The written `client.ts`. */
-  file: string;
+  /** The written `client.ts`; `null` when this layer has no use for one. */
+  file: string | null | ((layer: Layer) => string | null);
   /** The same for a document with several backend services, when the client has a way to name them. */
   withServices?: string;
   /** Packages the written code imports (`doctor` looks for them). */
   packages: string[];
 }
 
-/**
- * The base URL, read from the environment the way @mrzr/api-client reads its
- * own: the same variable names, `import.meta.env` (Vite and the like) and
- * `process.env`, and `window.__API_BASE_URL__` to override. A framework that only
- * replaces literal `process.env.NAME` reads needs the name written out here.
- * (A plain string of the written file: no backtick, no dollar-brace.)
- */
-const BASE_URL_FROM_ENV = `
-const BASE_URL_KEYS = [
-  "NEXT_PUBLIC_API_URL",
-  "NEXT_PUBLIC_API_BASE_URL",
-  "NEXT_PUBLIC_BASE_URL",
-  "VITE_API_URL",
-  "VITE_API_BASE_URL",
-  "VITE_BASE_URL",
-  "NUXT_PUBLIC_API_URL",
-  "REACT_APP_API_URL",
-  "EXPO_PUBLIC_API_URL",
-  "PUBLIC_API_URL",
-  "PUBLIC_API_BASE_URL",
-  "API_URL",
-  "API_BASE_URL",
-];
-
-/** The API base URL from the environment; empty when none is set. */
-function baseUrlFromEnv(): string {
-  const bags: Record<string, unknown>[] = [];
-  try {
-    const bag = (import.meta as unknown as { env?: Record<string, unknown> }).env;
-    if (bag) bags.push(bag);
-  } catch {
-    // not a module that has import.meta
-  }
-  const processEnv = (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env;
-  if (processEnv) bags.push(processEnv);
-  const override = (globalThis as { __API_BASE_URL__?: unknown }).__API_BASE_URL__;
-  if (typeof override === "string" && override) return override;
-  for (const key of BASE_URL_KEYS) {
-    for (const bag of bags) {
-      const value = bag[key];
-      if (typeof value === "string" && value) return value;
-    }
-  }
-  return "";
-}
-`;
-
 const TRANSPORTS: Record<HttpClientName, Transport> = {
   fetch: {
-    file: `${BASE_URL_FROM_ENV}
-/**
+    // Only a call of the main service starts from this base URL: when every
+    // operation names a service of its own, there is nothing to export.
+    file: ({ main }) =>
+      main
+        ? `/**
  * Where every generated call starts: the routes are written without the API's
- * prefix, which this base URL carries. This file is yours; set the variable
- * (VITE_API_URL, ...) or write the URL here.
+ * prefix, which this base URL carries (VITE_API_URL=https://host/api/v1).
+ * This file is yours.
  */
-export const baseUrl = baseUrlFromEnv();
-`,
+export const baseUrl: string = import.meta.env.VITE_API_URL ?? "";
+`
+        : null,
     packages: [],
   },
   axios: {
-    file: `import axios from "axios";
-${BASE_URL_FROM_ENV}
+    file: ({ main }) => `import axios from "axios";
+
 /**
- * The instance every generated call goes through. This file is yours: base URL,
- * interceptors, adapters and defaults belong here. The base URL is read from the
- * environment (VITE_API_URL, ...); the routes are written without the API's prefix.
+ * The instance every generated call goes through. This file is yours: interceptors,
+ * adapters and defaults belong here.${
+   main
+     ? `
+ * The routes are written without the API's prefix, which the base URL carries
+ * (VITE_API_URL=https://host/api/v1).`
+     : `
+ * Every operation names a service of its own, whose base URL is the call's.`
+ }
  */
-export const http = axios.create({ baseURL: baseUrlFromEnv() });
+export const http = axios.create(${main ? "{ baseURL: import.meta.env.VITE_API_URL }" : ""});
 `,
     packages: ["axios"],
   },
@@ -118,14 +90,17 @@ export const apiClient = createClient({
     packages: ["@mrzr/api-client"],
   },
   angular: {
-    file: `${BASE_URL_FROM_ENV}
-/**
+    file: ({ main }) =>
+      main
+        ? `/**
  * Where every generated call starts: the routes are written without the API's
- * prefix, which this base URL carries. HttpClient itself is injected into the
- * services, so its interceptors apply. This file is yours.
+ * prefix, which this base URL carries (VITE_API_URL=https://host/api/v1).
+ * HttpClient itself is injected into the services, so its interceptors apply.
+ * This file is yours.
  */
-export const baseUrl = baseUrlFromEnv();
-`,
+export const baseUrl: string = import.meta.env.VITE_API_URL ?? "";
+`
+        : null,
     packages: ["@angular/common", "@angular/core", "rxjs"],
   },
 };
@@ -136,8 +111,13 @@ export const HTTP_CLIENTS = Object.keys(TRANSPORTS) as HttpClientName[];
 export const httpPackages = (http: HttpClientName): string[] =>
   TRANSPORTS[http].packages;
 
-/** The `client.ts` to write, or `null` when the client needs none. */
-export function clientSource(http: HttpClientName, services = false): string {
+/** The `client.ts` to write, or `null` when this layer needs none. */
+export function clientSource(
+  http: HttpClientName,
+  layer: Layer = { services: false, main: true },
+): string | null {
   const { file, withServices } = TRANSPORTS[http];
-  return `${BANNER}\n${services && withServices ? withServices : file}`;
+  const chosen = layer.services && withServices ? withServices : file;
+  const text = typeof chosen === "function" ? chosen(layer) : chosen;
+  return text === null ? null : `${BANNER}\n${text}`;
 }

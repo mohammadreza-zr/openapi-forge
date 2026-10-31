@@ -1,6 +1,7 @@
-// Every client reads where the API lives from the environment: axios, fetch and
-// Angular's HttpClient through the `client.ts` they are written with, api-client
-// on its own. The reader is the written code itself, run with the variable set.
+// Every client reads where the API lives from the environment, each in its own
+// way: axios on its instance, fetch and Angular's HttpClient through the `baseUrl`
+// their client.ts exports, api-client by itself. The written code is bundled the
+// way Vite does it (`import.meta.env.VITE_API_URL` replaced by its value) and run.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, writeFile } from "node:fs/promises";
@@ -12,8 +13,8 @@ import { resolveOptions } from "../dist/config.js";
 import { runtimeFiles } from "../dist/runtime/index.js";
 import { root } from "./harness.mjs";
 
-/** Bundles the written `client.ts` of `http` and prints what it reads from `env`. */
-async function read(http, env, expression) {
+/** Bundles the written `client.ts` of `http` with `VITE_API_URL` set to `value`, and prints `expression`. */
+async function read(http, value, expression) {
   const { build } = await import("esbuild");
   const dir = await mkdtemp(join(tmpdir(), "forge-env-"));
   const options = resolveOptions({ http, library: http === "angular" ? "angular-query" : "react-query", target: "requests" });
@@ -26,6 +27,7 @@ async function read(http, env, expression) {
     format: "esm",
     nodePaths: [join(root, "node_modules")],
     logLevel: "silent",
+    define: { "import.meta.env.VITE_API_URL": value === undefined ? "undefined" : JSON.stringify(value) },
     // Some dependencies (axios) are CommonJS and call require.
     banner: { js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);' },
   });
@@ -33,27 +35,17 @@ async function read(http, env, expression) {
     join(dir, "run.mjs"),
     `import * as client from "./client.mjs"; console.log(JSON.stringify(${expression}));`,
   );
-  return JSON.parse(
-    execFileSync(process.execPath, [join(dir, "run.mjs")], {
-      env: { PATH: process.env.PATH, ...env },
-      encoding: "utf8",
-    }),
-  );
+  return JSON.parse(execFileSync(process.execPath, [join(dir, "run.mjs")], { encoding: "utf8" }));
 }
 
-test("fetch and Angular read their base URL from the environment", async () => {
+test("fetch and Angular start every call from the base URL in the environment", async () => {
   for (const http of ["fetch", "angular"]) {
-    assert.equal(await read(http, { VITE_API_URL: "https://api.test/v1" }, "client.baseUrl"), "https://api.test/v1", http);
-    assert.equal(await read(http, { API_BASE_URL: "https://other.test" }, "client.baseUrl"), "https://other.test", http);
+    assert.equal(await read(http, "https://api.test/v1", "client.baseUrl"), "https://api.test/v1", http);
     // Nothing set: empty, and the call starts from the page's own origin.
-    assert.equal(await read(http, {}, "client.baseUrl"), "", http);
+    assert.equal(await read(http, undefined, "client.baseUrl"), "", http);
   }
 });
 
-test("axios builds its instance on the base URL from the environment", async () => {
-  assert.equal(
-    await read("axios", { VITE_API_URL: "https://api.test/v1" }, "client.http.defaults.baseURL"),
-    "https://api.test/v1",
-  );
-  assert.equal(await read("axios", {}, "client.http.defaults.baseURL ?? ''"), "");
+test("axios builds its instance on the base URL in the environment", async () => {
+  assert.equal(await read("axios", "https://api.test/v1", "client.http.defaults.baseURL"), "https://api.test/v1");
 });

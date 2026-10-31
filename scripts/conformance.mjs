@@ -105,6 +105,8 @@ for (const { library, http, target: mode = "hooks" } of variants) {
       "bundler",
       "--lib",
       "es2023,dom",
+      // Vite types `import.meta.env`, which `client.ts` reads; a plain tsc needs it said.
+      join(root, "scripts/vite-env.d.ts"),
       ...written.filter((item) => item.endsWith(".ts")),
     ],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },

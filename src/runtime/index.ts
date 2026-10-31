@@ -9,7 +9,7 @@ import { LIBRARIES } from "./libraries/index.js";
 
 export function runtimeFiles(
   options: ForgeOptions,
-  services: string[] = [],
+  layer: { services: string[]; main: boolean } = { services: [], main: true },
 ): Map<string, string> {
   const files = new Map<string, string>();
   const hooks = options.target === "hooks";
@@ -21,7 +21,11 @@ export function runtimeFiles(
     "types.ts",
     `${BANNER}\n${types.imports}${typesBase()}${types.body}`,
   );
-  files.set("client.ts", clientSource(options.http, services.length > 0));
+  const client = clientSource(options.http, {
+    services: layer.services.length > 0,
+    main: layer.main,
+  });
+  if (client !== null) files.set("client.ts", client);
   if (hooks) files.set("hooks.ts", library.hooks(infinite));
   return files;
 }

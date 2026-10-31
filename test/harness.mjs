@@ -40,15 +40,15 @@ export async function generateTo(name, patch = {}) {
   // The api-client file is the project's to edit: a test edits it too, so it can
   // point the client at the server it started.
   const file = join(dir, "ts", "client.ts");
-  // `import.meta` (where Vite puts the environment) cannot be compiled to the
+  // `import.meta.env` (where Vite puts the environment) cannot be compiled to the
   // CommonJS these tests run; the tests point the client at the server anyway.
-  const source = (existsSync(file) ? readFileSync(file, "utf8") : "").replace(
-    "(import.meta as unknown as { env?: Record<string, unknown> }).env",
-    "undefined",
+  const source = (existsSync(file) ? readFileSync(file, "utf8") : "").replaceAll(
+    "import.meta.env.VITE_API_URL",
+    "(globalThis as { NO_SUCH_VARIABLE?: string }).NO_SUCH_VARIABLE",
   );
   if (source) writeFileSync(file, source);
   for (const name of ["apiClient", "http", "baseUrl"]) {
-    const line = new RegExp(`export const ${name} = [^;]*;`);
+    const line = new RegExp(`export const ${name}(: [^=]+)? = [^;]*;`);
     if (line.test(source)) {
       writeFileSync(
         file,

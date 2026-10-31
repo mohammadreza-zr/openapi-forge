@@ -282,6 +282,8 @@ export interface EmitResult {
   files: Map<string, string>;
   /** The backend services the operations name (`x-service`), sorted. */
   services: string[];
+  /** Some operation belongs to no service, so it starts from the client's own base URL. */
+  main: boolean;
   operations: number;
   tags: number;
   problems: Problem[];
