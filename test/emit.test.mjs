@@ -69,14 +69,21 @@ test("target requests emits functions only", () => {
   assert.doesNotMatch(pets, /hooks/);
 });
 
-test("a multipart body is a FormData, whatever the client", () => {
-  // Every built-in client sees the FormData and sets the Content-Type itself.
-  for (const http of ["fetch", "axios", "api-client"]) {
+test("a multipart body is a FormData, or for api-client a plain object it turns into one", () => {
+  // fetch and axios see the FormData and set the Content-Type themselves.
+  for (const http of ["fetch", "axios"]) {
     const files = run({ http, target: http === "fetch" ? "requests" : "hooks" }).files;
     assert.match(files.get("pets.ts"), /body\?: FormData/, http);
     assert.doesNotMatch(files.get("pets.ts"), /isFormData/, http);
     assert.match(files.get("models.ts"), /file\?: Blob;/, http);
   }
+  // api-client's own `isFormData` writes a plain object as the form and sends a FormData as it is.
+  const apiClient = run({}).files;
+  assert.match(apiClient.get("pets.ts"), /body: UploadPhotoBody \| FormData \| undefined/);
+  assert.match(apiClient.get("pets.ts"), /\.\.\.config,\s*isFormData: true,/);
+  assert.match(apiClient.get("models.ts"), /file\?: Blob;/);
+  // A JSON or urlencoded body is not told to be a form.
+  assert.doesNotMatch(apiClient.get("pets.ts").replace(/export function uploadPhoto[\s\S]*?\n\}\n/, ""), /isFormData/);
 });
 
 test("every client starts a call from a base URL, and the route has lost the prefix", () => {

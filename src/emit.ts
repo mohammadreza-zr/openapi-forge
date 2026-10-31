@@ -741,7 +741,9 @@ export function emit(
     // FormData or a URLSearchParams, not a plain object it would write as JSON.
     if (builtin) {
       const kind = bodyKind(operation.bodyMediaType);
-      if (kind === "multipart") return "FormData";
+      // api-client's `isFormData` turns a plain object into the form itself, and
+      // leaves a FormData as it is; the others are given the FormData to send.
+      if (kind === "multipart") return direct ? `${type} | FormData` : "FormData";
       // HttpClient does not send a URLSearchParams as a form; its own form body is HttpParams.
       if (kind === "urlencoded") return service ? "HttpParams" : "URLSearchParams";
     }
@@ -1242,6 +1244,9 @@ export function emit(
         `headers: { ...config?.headers, "Content-Type": ${JSON.stringify(contentType)} }`,
       );
     }
+    // A multipart body is the client's own `isFormData`: it writes a plain object
+    // as the form (a file or list per entry, an object as JSON) and sends a FormData as it is.
+    if (bodyKind(operation.bodyMediaType) === "multipart") configLines.push("isFormData: true");
     const responseType = responseTypeOf(operation);
     if (responseType) configLines.push(`responseType: ${JSON.stringify(responseType)}`);
     // A service of its own is api-client's `services` plugin: its base URL, session

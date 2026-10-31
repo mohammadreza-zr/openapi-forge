@@ -410,7 +410,7 @@ test("api-client and axios say in the signature what the config must carry", () 
   assert.match(apiClient, /export function listPets\(config\?: RequestConfig<ApiListData<Pet>>\)/);
   // A required query is `params` of the same config, and a body that may be left out cannot precede a required config.
   assert.match(apiClient, /addTemplateToUrl: \{ pet_id: string \}; params: ListVisitsQuery \}/);
-  assert.match(apiClient, /uploadPhoto\(body: FormData \| undefined, config: RequestConfig<null> & /);
+  assert.match(apiClient, /uploadPhoto\(body: UploadPhotoBody \| FormData \| undefined, config: RequestConfig<null> & /);
   const axios = build({ http: "axios" }).get("pets.ts");
   assert.match(axios, /export function listVisits\(petId: string, config: AxiosRequestConfig & \{ params: ListVisitsQuery \}\)/);
   assert.match(axios, /export function getPet\(petId: string, config\?: AxiosRequestConfig\)/);

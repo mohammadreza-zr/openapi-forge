@@ -106,6 +106,18 @@ for (const http of ["fetch", "axios", "api-client"]) {
       assert.match(last().body, /bytes/);
     });
 
+    if (http === "api-client") {
+      test("an upload given as a plain object is written as the form by the client", async () => {
+        await api.pets.uploadPhoto(
+          { file: new Blob(["bytes"], { type: "text/plain" }) },
+          { addTemplateToUrl: { pet_id: "7" } },
+        );
+        assert.match(last().headers["content-type"], /^multipart\/form-data; boundary=/);
+        assert.match(last().body, /name="file"/);
+        assert.match(last().body, /bytes/);
+      });
+    }
+
     test("configured headers go with every request, and a call's own win", async () => {
       pointClient(http, api.client, api.require, backend.base, {
         "X-Token": "one",
