@@ -53,10 +53,10 @@ test("axios builds its instance on the base URL in the environment", async () =>
 test("the variable is named by baseUrlEnv; api-client ignores it and finds its own", async () => {
   for (const http of ["axios", "fetch"]) {
     const expression = http === "axios" ? "client.http.defaults.baseURL" : "client.baseUrl";
-    assert.equal(await read(http, "https://api.test/v1", expression, "VITE_SAHRA_URL"), "https://api.test/v1", http);
+    assert.equal(await read(http, "https://api.test/v1", expression, "VITE_MYAPP_URL"), "https://api.test/v1", http);
   }
-  const written = (http) => runtimeFiles(resolveOptions({ http, baseUrlEnv: "VITE_SAHRA_URL", target: "requests" })).get("client.ts");
-  assert.match(written("axios"), /import\.meta\.env\.VITE_SAHRA_URL/);
-  assert.doesNotMatch(written("api-client"), /SAHRA|import\.meta/);
+  const written = (http) => runtimeFiles(resolveOptions({ http, baseUrlEnv: "VITE_MYAPP_URL", target: "requests" })).get("client.ts");
+  assert.match(written("axios"), /import\.meta\.env\.VITE_MYAPP_URL/);
+  assert.doesNotMatch(written("api-client"), /MYAPP|import\.meta/);
   assert.throws(() => resolveOptions({ baseUrlEnv: "not a name" }), /baseUrlEnv must be the name of an environment variable/);
 });

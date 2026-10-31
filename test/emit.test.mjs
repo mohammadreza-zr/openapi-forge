@@ -188,8 +188,8 @@ test("a service's base URL is, by default, read from the environment — never f
   // The variable is named after baseUrlEnv and the service; dashes become underscores.
   const dashed = twoServices();
   for (const item of Object.values(dashed.paths))
-    for (const operation of Object.values(item)) if (operation["x-service"] === "pets") operation["x-service"] = "file-processing";
-  assert.match(emit(dashed, options({ baseUrlEnv: "VITE_SAHRA" }), "x").files.get("services.ts"), /"file-processing": import\.meta\.env\.VITE_SAHRA_FILE_PROCESSING \?\? ""/);
+    for (const operation of Object.values(item)) if (operation["x-service"] === "pets") operation["x-service"] = "file-store";
+  assert.match(emit(dashed, options({ baseUrlEnv: "VITE_MYAPP" }), "x").files.get("services.ts"), /"file-store": import\.meta\.env\.VITE_MYAPP_FILE_STORE \?\? ""/);
   // A URL you give wins; your own function is used only when you name it.
   assert.match(services({ runtime: { services: { baseUrls: { pets: "https://pets.test" } } } }), /"pets": "https:\/\/pets\.test"/);
   const own = services({ runtime: { services: { module: "./env", fn: "serviceBaseUrl" } } });
