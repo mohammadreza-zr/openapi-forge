@@ -17,7 +17,8 @@ function pointClient(http, client, req, base, headers = {}) {
       req("@mrzr/api-client").createClient({ baseUrl: base, headers }),
     );
   } else if (http === "fetch") {
-    pointFetch(base, headers);
+    // A `fetch` route is the document's whole path (`/api/v1/pets`): only the origin goes in front.
+    pointFetch(base.replace(/\/api\/v1$/, ""), headers);
   }
   // Angular's HttpClient has no base URL: the probes put it in an interceptor.
 }

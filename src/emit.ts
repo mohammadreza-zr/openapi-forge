@@ -504,9 +504,13 @@ export function emit(
           name,
           method,
           path,
-          // The base URL already carries the prefix, so the route does not.
+          // The base URL already carries the prefix, so the route does not. `fetch`
+          // has no base URL of its own: a call of the main service starts from the
+          // origin, so its route keeps the document's whole path.
           url:
-            (apiPrefix && path.startsWith(apiPrefix)
+            (apiPrefix &&
+            path.startsWith(apiPrefix) &&
+            !(style === "fetch" && !operation["x-service"])
               ? path.slice(apiPrefix.length)
               : path) || "/",
           tags: operation.tags?.length ? operation.tags : ["default"],
@@ -1909,6 +1913,16 @@ export function emit(
   ].sort();
   if (services.length) {
     const urls = rt.services.baseUrls ?? {};
+    // Without an address a service cannot be called (api-client refuses to start): say so.
+    for (const service of services) {
+      if (!rt.services.fn && !urls[service]) {
+        problems.set(`service ${service}: base URL`, {
+          where: `service ${service}`,
+          message:
+            "has no base URL: set `runtime.services.baseUrls` (or `runtime.services.fn`), or the layer cannot call it",
+        });
+      }
+    }
     const entry = (service: string): string => {
       if (rt.services.fn)
         return `${rt.services.fn}(${JSON.stringify(service)})`;

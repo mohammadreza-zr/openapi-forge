@@ -74,6 +74,25 @@ test("a multipart body is a FormData, whatever the client", () => {
   }
 });
 
+test("fetch has no base URL, so a main-service route keeps the whole path", () => {
+  const route = (http) =>
+    run({ http }).files.get("pets.ts").match(/getPet: "([^"]+)"/)[1];
+  assert.equal(route("axios"), "/pets/{pet_id}");
+  assert.equal(route("api-client"), "/pets/{pet_id}");
+  assert.equal(route("fetch"), "/api/v1/pets/{pet_id}");
+});
+
+test("a service with no base URL is reported, not left to fail at start-up", () => {
+  const spec = petstore();
+  for (const item of Object.values(spec.paths))
+    for (const operation of Object.values(item)) operation["x-service"] = "pets";
+  const said = (patch) =>
+    emit(spec, options(patch), "x").problems.map((item) => `${item.where} ${item.message}`).join("\n");
+  assert.match(said({}), /service pets has no base URL/);
+  assert.doesNotMatch(said({ runtime: { services: { baseUrls: { pets: "https://pets.test" } } } }), /base URL/);
+  assert.doesNotMatch(said({ runtime: { services: { module: "./env", fn: "serviceBaseUrl" } } }), /base URL/);
+});
+
 test("tags can be included or excluded", () => {
   assert.deepEqual([...run({ tags: { include: ["Pets"] } }).files.keys()].includes("owners.ts"), false);
   assert.deepEqual([...run({ tags: { exclude: ["Pets"] } }).files.keys()].includes("pets.ts"), false);
