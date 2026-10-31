@@ -27,14 +27,16 @@ const quiet = (fn) => {
   return fn().finally(() => Object.assign(console, { log, warn }));
 };
 
-/** Every client: each library on `fetch`, and each other HTTP client once (the reactive Angular one over `HttpClient`). */
+/**
+ * Every client: each library over axios, @mrzr/api-client once, the Angular
+ * service over `HttpClient`, and `fetch` (which answers a raw `Response`, so it
+ * has requests only).
+ */
 const variants = [
-  ...LIBRARY_NAMES.filter((library) => library !== "angular-query").map((library) => ({ library, http: "fetch" })),
-  { library: "angular-query", http: "fetch" },
-  { library: "angular-query", http: "axios" },
-  { library: "react-query", http: "axios" },
+  ...LIBRARY_NAMES.map((library) => ({ library, http: "axios" })),
   { library: "react-query", http: "api-client" },
   { library: "angular-query", http: "angular" },
+  { library: "react-query", http: "fetch", target: "requests" },
 ].filter((variant) => !only || variant.library === only);
 
 const documents = [
@@ -54,7 +56,7 @@ rmSync(out, { recursive: true, force: true });
 const failures = [];
 let checked = 0;
 
-for (const { library, http } of variants) {
+for (const { library, http, target: mode = "hooks" } of variants) {
   const label = `${library}/${http}`;
   const base = join(out, `${library}-${http}`);
   const written = [];
@@ -69,6 +71,7 @@ for (const { library, http } of variants) {
             out: target,
             library,
             http,
+            target: mode,
             zod: true,
             infinite: true,
             format: false,

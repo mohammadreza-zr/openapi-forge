@@ -261,6 +261,13 @@ export function resolveOptions(
       `openapi-forge: http "angular" is a service over HttpClient, so its hooks are Angular Query's — use library "angular-query" (or target "requests"), not ${JSON.stringify(merged.library)}.`,
     );
   }
+  // `fetch` answers a raw `Response` (a 404 resolves, the body is a stream read
+  // once), so a query hook over it would cache a stream and never see an error.
+  if (merged.client === "builtin" && merged.http === "fetch" && merged.target === "hooks") {
+    throw new Error(
+      'openapi-forge: http "fetch" answers a raw Response, so it has no hooks — use target "requests" (or another http client for hooks).',
+    );
+  }
   const infinite: unknown = merged.infinite;
   if (infinite) {
     merged.infinite = {

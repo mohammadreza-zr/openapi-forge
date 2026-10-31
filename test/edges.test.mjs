@@ -59,7 +59,7 @@ describe("the code that is written", () => {
     // axios takes header values as they are and the call's own headers are kept.
     assert.match(text, /headers: \{ \.\.\.config\?\.headers, \.\.\.headers \}/);
     // `fetch` and HttpClient take text: a number is written as text on the way out.
-    assert.match(edgesTs({ http: "fetch" }), /requestHeaders\.set\("X-Page", String\(headers\["X-Page"\]\)\)/);
+    assert.match(edgesTs({ http: "fetch", target: "requests" }), /requestHeaders\.set\("X-Page", String\(headers\["X-Page"\]\)\)/);
     assert.match(
       edgesTs({ http: "angular", library: "angular-query" }),
       /\.\.\.Object\.fromEntries\(\s*Object\.entries\(headers\)[\s\S]*?String\(value\)/,
@@ -90,7 +90,7 @@ describe("the code that is written", () => {
     assert.doesNotMatch(edgesTs({ http: "api-client" }), /function remove\(/);
     assert.match(text, /export function remove\(\s*body: RemoveBody,/);
     assert.match(text, /http\.delete<null>\(\s*edgesEndpoints\.remove,\s*\{[^}]*data: body/s);
-    assert.match(edgesTs({ http: "fetch" }), /method: "DELETE", headers: requestHeaders, body: JSON\.stringify\(body\)/);
+    assert.match(edgesTs({ http: "fetch", target: "requests" }), /method: "DELETE", headers: requestHeaders, body: JSON\.stringify\(body\)/);
     assert.match(edgesTs({ http: "angular", library: "angular-query" }), /this\.http\.delete<null>\(edgesEndpoints\.remove, \{ body \}\)/);
     const custom = written({ client: "custom" });
     assert.doesNotMatch(custom.files.get("edges.ts"), /function remove\(/);

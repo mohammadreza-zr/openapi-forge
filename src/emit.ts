@@ -124,9 +124,7 @@ export function emit(
       ? `IRes<${payload}>`
       : style === "axios"
         ? `AxiosResponse<${payload}>`
-        : style === "fetch"
-          ? "Response"
-          : payload;
+        : payload;
   const { prefix } = LIBRARIES[options.library];
   // A reactive library reads its arguments where the request is made, so a
   // ref, a signal or a getter in their place keeps the query in step.
@@ -505,12 +503,13 @@ export function emit(
           method,
           path,
           // The base URL already carries the prefix, so the route does not. `fetch`
-          // has no base URL of its own: a call of the main service starts from the
-          // origin, so its route keeps the document's whole path.
+          // and Angular's `HttpClient` have no base URL in the generated code: a call
+          // of the main service starts from the origin, so its route keeps the
+          // document's whole path.
           url:
             (apiPrefix &&
             path.startsWith(apiPrefix) &&
-            !(style === "fetch" && !operation["x-service"])
+            !((style === "fetch" || style === "angular") && !operation["x-service"])
               ? path.slice(apiPrefix.length)
               : path) || "/",
           tags: operation.tags?.length ? operation.tags : ["default"],
@@ -813,15 +812,13 @@ export function emit(
 
   /**
    * An infinite page is read from the payload of the answer: `response.data`
-   * for the clients that wrap it, `response.json()` for `fetch`'s own `Response`.
-   * Paging has to read the list, so this is the one place an answer is opened.
+   * for the clients that wrap it. Paging has to read the list, so this is the one
+   * place an answer is opened.
    */
   const pageOf = (type: string) =>
     style === "api-client" || style === "axios"
       ? `.then((response) => response.data as ${type})`
-      : style === "fetch"
-        ? `.then((response) => response.json() as Promise<${type}>)`
-        : "";
+      : "";
 
   /**
    * A read is an infinite list when it answers the paged shape and takes both
@@ -993,11 +990,8 @@ export function emit(
       ].sort();
       lines.push(`import { ${callers.join(", ")} } from "${rt.callers.module}";`);
     }
-    const usesList =
-      list &&
-      operations.some((operation) =>
-        payloadFor(operation).startsWith(list.name),
-      );
+    // Only where the code names it: `fetch` writes no payload type.
+    const usesList = list && body.includes(`${list.name}<`);
     const listWithTypes = usesList && list.module === rt.types.module;
     if (usesList && !listWithTypes) {
       lines.push(`import type { ${list.name} } from "${list.module}";`);

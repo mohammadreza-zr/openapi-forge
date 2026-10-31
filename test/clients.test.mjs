@@ -184,11 +184,13 @@ test("http picks what the built-in client sends with; the default is @mrzr/api-c
     runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts"),
   );
   const files = (http, extra = {}) => runtimeFiles(resolveOptions({ http, ...extra }));
+  // fetch answers a raw Response, so it has requests only.
+  const fetchFiles = () => runtimeFiles(resolveOptions({ http: "fetch", target: "requests" }));
   // axios and @mrzr/api-client have an instance the project owns; fetch is the
   // platform's function and Angular injects its HttpClient, so neither has a file.
   assert.match(files("axios").get("client.ts"), /export const http = axios\.create\(\);/);
   assert.match(files("api-client").get("client.ts"), /createClient\(\)/);
-  assert.equal(files("fetch").has("client.ts"), false);
+  assert.equal(fetchFiles().has("client.ts"), false);
   assert.equal(files("angular", { library: "angular-query" }).has("client.ts"), false);
 });
 
@@ -198,7 +200,7 @@ test("no client keeps a wrapper: each one is called as it is", () => {
     assert.doesNotMatch(client, /configureClient|async function request|function fillPath|shapeBody|textHeaders|queryOf/, http);
     assert.doesNotMatch(runtimeFiles(resolveOptions({ http })).get("types.ts"), /ApiResponseError|GeneratedRequestConfig/, http);
   }
-  const types = runtimeFiles(resolveOptions({ http: "fetch" })).get("types.ts");
+  const types = runtimeFiles(resolveOptions({ http: "fetch", target: "requests" })).get("types.ts");
   assert.doesNotMatch(types, /ApiResponseError|GeneratedRequestConfig/);
 });
 
@@ -213,11 +215,12 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   // The instance's own settings are left alone: a list is written however axios (or its paramsSerializer) writes it.
   assert.doesNotMatch(axios, /paramsSerializer/);
   // fetch: the platform function, its init, its Response.
-  const fetched = pets("fetch");
+  const fetched = build({ http: "fetch", target: "requests" }).get("pets.ts");
   assert.match(fetched, /export function getPet\(petId: string, init\?: RequestInit\) \{\s*return fetch\(petsEndpoints\.getPet\.replace/);
   assert.match(fetched, /const search = new URLSearchParams\(\);/);
   assert.match(fetched, /for \(const item of params\.ids \?\? \[\]\) search\.append\("ids", String\(item\)\);/);
-  assert.match(fetched, /ApiQueryOptions<Response,/);
+  // No hook: a raw Response is not something to cache or to retry.
+  assert.doesNotMatch(fetched, /ApiQueryOptions|useApiQuery|Keys/);
   assert.match(fetched, /if \(!requestHeaders\.has\("Content-Type"\)\) requestHeaders\.set\("Content-Type", "application\/json"\);/);
   assert.match(fetched, /body: JSON\.stringify\(body\)/);
   // Angular: an injectable service over HttpClient, its Observable.
@@ -234,6 +237,12 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   assert.match(apiClient, /\(signal\) => getPet\(\{ addTemplateToUrl: \{ pet_id: petId \}, signal \}\)/);
   assert.match(apiClient, /config\?: RequestConfig<Pet>/);
   assert.match(apiClient, /import type \{[^}]*\bRequestConfig\b[^}]*\} from "@mrzr\/api-client"/);
+});
+
+test("fetch answers a raw Response, so it has requests only", () => {
+  assert.throws(() => resolveOptions({ http: "fetch" }), /use target "requests"/);
+  assert.doesNotThrow(() => resolveOptions({ http: "fetch", target: "requests" }));
+  assert.doesNotThrow(() => resolveOptions({ client: "custom", http: "fetch" }));
 });
 
 test("Angular's requests are a service, so its hooks are Angular Query's", () => {
@@ -321,7 +330,7 @@ test("doctor looks for the library's packages and the transport's", async () => 
 
 test("api-client's delete takes no body, so a DELETE with one is left out and the key cannot be named", () => {
   assert.equal(resolveOptions({ http: "api-client" }).runtime.requestKeys.body, false);
-  assert.equal(resolveOptions({ http: "fetch" }).runtime.requestKeys.body, "body");
+  assert.equal(resolveOptions({ http: "fetch", target: "requests" }).runtime.requestKeys.body, "body");
   // The built-in transport would drop the body without a word, so naming a key is an error.
   assert.throws(
     () =>
@@ -357,10 +366,11 @@ test("no built-in client sets an option that changes how its client behaves", ()
     /validateStatus|throwError|throwOnCancel|stringifyBody|fullData|worker:|arraybuffer|arrayBuffer|observe:|withCredentials|credentials:|timeout|retry/;
   const strip = (text) => text.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
   for (const [http, library] of [["axios", "react-query"], ["api-client", "react-query"], ["fetch", "react-query"], ["angular", "angular-query"]]) {
-    const files = build({ http, library, infinite: true });
+    const target = http === "fetch" ? "requests" : "hooks";
+    const files = build({ http, library, target, infinite: true });
     for (const [name, text] of files)
       assert.doesNotMatch(strip(text), forbidden, `${http} ${name}`);
-    for (const [name, text] of runtimeFiles(resolveOptions({ http, library })))
+    for (const [name, text] of runtimeFiles(resolveOptions({ http, library, target })))
       assert.doesNotMatch(strip(text), forbidden, `${http} ${name}`);
   }
 });

@@ -67,19 +67,21 @@ test("target requests emits functions only", () => {
 test("a multipart body is a FormData, whatever the client", () => {
   // Every built-in client sees the FormData and sets the Content-Type itself.
   for (const http of ["fetch", "axios", "api-client"]) {
-    const files = run({ http }).files;
+    const files = run({ http, target: http === "fetch" ? "requests" : "hooks" }).files;
     assert.match(files.get("pets.ts"), /body\?: FormData/, http);
     assert.doesNotMatch(files.get("pets.ts"), /isFormData/, http);
     assert.match(files.get("models.ts"), /file\?: Blob;/, http);
   }
 });
 
-test("fetch has no base URL, so a main-service route keeps the whole path", () => {
+test("fetch and Angular have no base URL, so a main-service route keeps the whole path", () => {
   const route = (http) =>
-    run({ http }).files.get("pets.ts").match(/getPet: "([^"]+)"/)[1];
+    run({ http, library: http === "angular" ? "angular-query" : "react-query", target: http === "fetch" ? "requests" : "hooks" }).files.get("pets.ts").match(/getPet: "([^"]+)"/)[1];
   assert.equal(route("axios"), "/pets/{pet_id}");
   assert.equal(route("api-client"), "/pets/{pet_id}");
+  // fetch and HttpClient have no base URL in the generated code: the whole path stays.
   assert.equal(route("fetch"), "/api/v1/pets/{pet_id}");
+  assert.equal(route("angular"), "/api/v1/pets/{pet_id}");
 });
 
 test("a service with no base URL is reported, not left to fail at start-up", () => {
@@ -158,7 +160,7 @@ test("services mark operations with their base URL", () => {
   assert.match(withServices, /import \{ services \} from "@mrzr\/api-client\/services"/);
   assert.match(withServices, /plugins: \[services\(API_SERVICE_BASE_URLS\)\]/);
   assert.doesNotMatch(runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts"), /services/);
-  const fetched = emit(spec, options({ http: "fetch" }), "x").files.get("pets.ts");
+  const fetched = emit(spec, options({ http: "fetch", target: "requests" }), "x").files.get("pets.ts");
   assert.match(fetched, /fetch\(API_SERVICE_BASE_URLS\["pets"\] \+ petsEndpoints\./);
 });
 

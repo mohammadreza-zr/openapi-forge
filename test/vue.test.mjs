@@ -13,7 +13,7 @@ import { compileCjs, generateTo, sleep, until } from "./harness.mjs";
 import { clientOf, payloadOf, pointClient } from "./probes/point.cjs";
 import { petApi, serve } from "./server.mjs";
 
-for (const http of ["fetch", "axios", "api-client"]) describe(`the vue-query hooks over ${http}`, () => {
+for (const http of ["axios", "api-client"]) describe(`the vue-query hooks over ${http}`, () => {
   let server;
   let vue;
   let app;

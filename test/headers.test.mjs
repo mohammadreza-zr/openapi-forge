@@ -14,7 +14,7 @@ import { clientOf, pointClient } from "./probes/point.cjs";
 import { edgesApi, serve } from "./server.mjs";
 
 // The client's headers are its own: the api-client functions take none as an argument.
-for (const http of ["fetch", "axios"]) describe(`header parameters in the vue-query hooks over ${http}`, () => {
+for (const http of ["axios"]) describe(`header parameters in the vue-query hooks over ${http}`, () => {
   let server;
   let vue;
   let app;

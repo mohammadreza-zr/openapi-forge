@@ -95,7 +95,7 @@ const create = useCreatePetMutation();
 create.mutate({ body: { name: "Tom" } });
 ```
 
-Without `@mrzr/api-client`, pick another client with `http`: `"axios"`, `"fetch"` (nothing to install) or `"angular"` (an injectable service over `HttpClient`). Each is called as itself — see [HTTP clients](#http-clients).
+Without `@mrzr/api-client`, pick another client with `http`: `"axios"`, `"fetch"` (nothing to install; functions only, `--target requests`) or `"angular"` (an injectable service over `HttpClient`). Each is called as itself — see [HTTP clients](#http-clients).
 
 ## What is generated
 
@@ -187,14 +187,14 @@ Four clients, four different worlds. The generator does not put one behind anoth
 | --- | --- | --- | --- | --- |
 | `api-client` (default) | `apiClient.get(…)` with api-client's own `RequestConfig` | api-client's `IRes<T>` (`data`, `statusCode`, `message`, …) | `export const apiClient = createClient();` | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) |
 | `axios` | `http.get<T>(url, config)` on your instance, with an `AxiosRequestConfig` | `AxiosResponse<T>`; a failed status is an `AxiosError` | `export const http = axios.create();` | `axios` |
-| `fetch` | `fetch(url, init)` with a `RequestInit` | the platform's `Response`; a failed status resolves, as `fetch` does | none | nothing |
+| `fetch` | `fetch(url, init)` with a `RequestInit` | the platform's `Response`; a failed status resolves, as `fetch` does. **Functions only** (`target: "requests"`): a raw `Response` is a stream read once and a 404 is not an error, so there is nothing a query hook could cache or retry | none | nothing |
 | `angular` | a method of an `@Injectable` service per tag, over the injected `HttpClient` | an `Observable<T>`; a failed status is an `HttpErrorResponse` | none | `@angular/common`, `@angular/core`, `rxjs` |
 
 `client.ts` (axios and api-client) is yours: base URL, interceptors, tokens and plugins go on the instance there. `fetch` is a function of the platform and Angular injects its `HttpClient`, so neither writes a `client.ts`; Angular's base URL is an interceptor, as in any Angular app.
 
 - **api-client**: an operation of a backend service is `apiClient.service("files").get(…)` through api-client's `services` plugin (`client.ts` is written with `services(API_SERVICE_BASE_URLS)` when the document has services; add it by hand to a `client.ts` that exists). A header parameter is not an argument of these functions — headers are api-client's own (`createClient({ headers })`, or `headers` in the config of one call). `delete` takes no body, so a `DELETE` operation with one is left out and listed.
 - **axios**: the call's config is the second-to-last argument of a body-less call, spread into the request; a query list is written the way axios writes it (`ids[]=a`) unless the instance has a `paramsSerializer`; the run lists each such parameter.
-- **fetch**: it has no base URL, so the route of a main-service call keeps the document's whole path (`/api/v1/pets` — it works same-origin or behind a dev proxy as generated), while a call of a backend service starts from that service's base URL, which carries the prefix. The query string is built in the function from the document's parameters (`URLSearchParams`), a JSON body is `JSON.stringify`-ed with its `Content-Type`, and reading the answer (`response.json()`) is yours.
+- **fetch**: it has no base URL, so the route of a main-service call keeps the document's whole path (`/api/v1/pets` — it works same-origin or behind a dev proxy as generated), and so does an Angular service call (your interceptor adds only the origin); while a call of a backend service starts from that service's base URL, which carries the prefix. The query string is built in the function from the document's parameters (`URLSearchParams`), a JSON body is `JSON.stringify`-ed with its `Content-Type`, and reading the answer (`response.json()`) is yours.
 - **Angular**: hooks are Angular Query's (`library: "angular-query"`), and a hook injects the tag's service (`inject(PetsService)`). `HttpClient` takes no `AbortSignal`; cancel by unsubscribing from the `Observable`.
 
 A multipart body is typed `FormData`; a form body is `URLSearchParams` (`HttpParams` for Angular) — the bodies each client sends as they are — so you build them yourself.
