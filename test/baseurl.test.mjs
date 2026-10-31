@@ -14,10 +14,10 @@ import { runtimeFiles } from "../dist/runtime/index.js";
 import { root } from "./harness.mjs";
 
 /** Bundles the written `client.ts` of `http` with `VITE_API_URL` set to `value`, and prints `expression`. */
-async function read(http, value, expression) {
+async function read(http, value, expression, env = "VITE_API_URL") {
   const { build } = await import("esbuild");
   const dir = await mkdtemp(join(tmpdir(), "forge-env-"));
-  const options = resolveOptions({ http, library: http === "angular" ? "angular-query" : "react-query", target: "requests" });
+  const options = resolveOptions({ http, library: http === "angular" ? "angular-query" : "react-query", target: "requests", baseUrlEnv: env });
   await writeFile(join(dir, "client.ts"), runtimeFiles(options).get("client.ts"));
   await build({
     entryPoints: [join(dir, "client.ts")],
@@ -27,7 +27,7 @@ async function read(http, value, expression) {
     format: "esm",
     nodePaths: [join(root, "node_modules")],
     logLevel: "silent",
-    define: { "import.meta.env.VITE_API_URL": value === undefined ? "undefined" : JSON.stringify(value) },
+    define: { [`import.meta.env.${env}`]: value === undefined ? "undefined" : JSON.stringify(value) },
     // Some dependencies (axios) are CommonJS and call require.
     banner: { js: 'import { createRequire as __cr } from "node:module"; const require = __cr(import.meta.url);' },
   });
@@ -48,4 +48,15 @@ test("fetch and Angular start every call from the base URL in the environment", 
 
 test("axios builds its instance on the base URL in the environment", async () => {
   assert.equal(await read("axios", "https://api.test/v1", "client.http.defaults.baseURL"), "https://api.test/v1");
+});
+
+test("the variable is named by baseUrlEnv; api-client ignores it and finds its own", async () => {
+  for (const http of ["axios", "fetch"]) {
+    const expression = http === "axios" ? "client.http.defaults.baseURL" : "client.baseUrl";
+    assert.equal(await read(http, "https://api.test/v1", expression, "VITE_SAHRA_URL"), "https://api.test/v1", http);
+  }
+  const written = (http) => runtimeFiles(resolveOptions({ http, baseUrlEnv: "VITE_SAHRA_URL", target: "requests" })).get("client.ts");
+  assert.match(written("axios"), /import\.meta\.env\.VITE_SAHRA_URL/);
+  assert.doesNotMatch(written("api-client"), /SAHRA|import\.meta/);
+  assert.throws(() => resolveOptions({ baseUrlEnv: "not a name" }), /baseUrlEnv must be the name of an environment variable/);
 });

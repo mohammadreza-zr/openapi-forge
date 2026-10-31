@@ -91,6 +91,8 @@ export const DEFAULTS: ForgeOptions = {
   input: "openapi.json",
   out: "src/api/generated",
   apiPrefix: "",
+  /** The variable axios, fetch and Angular read the API's base URL from; api-client finds its own. */
+  baseUrlEnv: "VITE_API_URL",
   /** `"builtin"` writes a runtime; `"custom"` uses `runtime` as given. */
   client: "builtin",
   /** `"hooks"` emits the hooks of `library` too; `"requests"` only functions. */
@@ -233,6 +235,11 @@ export function resolveOptions(
       );
     }
     merged.runtime.requestKeys.body = false;
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(merged.baseUrlEnv)) {
+    throw new Error(
+      `openapi-forge: baseUrlEnv must be the name of an environment variable (VITE_API_URL), not ${JSON.stringify(merged.baseUrlEnv)}.`,
+    );
   }
   if (!["builtin", "custom"].includes(merged.client)) {
     throw new Error(

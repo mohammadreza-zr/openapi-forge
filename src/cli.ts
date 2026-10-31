@@ -33,6 +33,7 @@ Options
   --input <path|url>     a document, or a folder of documents (one per service)
   --out <dir>            output folder
   --api-prefix <path>    prefix stripped from emitted routes (e.g. /api/v1)
+  --base-url-env <NAME>  variable axios, fetch and Angular read the base URL from (default VITE_API_URL)
   --tags a,b             emit only these tags
   --exclude-tags a,b     skip these tags
   --target <hooks|requests>   hooks too, or request functions only
@@ -72,6 +73,10 @@ export default defineConfig({
 
   // Stripped from every route, so the base URL can carry it: "/api/v1".
   apiPrefix: "",
+
+  // The environment variable axios, fetch and Angular read the API's base URL
+  // from (import.meta.env.VITE_API_URL); @mrzr/api-client finds its own.
+  baseUrlEnv: "VITE_API_URL",
 
   // "builtin" writes client.ts / hooks.ts / types.ts once; "custom" uses
   // your own transport — see the README for the \`runtime\` it needs.
@@ -115,6 +120,7 @@ function parseCommandLine() {
         input: { type: "string" },
         out: { type: "string" },
         "api-prefix": { type: "string" },
+        "base-url-env": { type: "string" },
         tags: { type: "string" },
         "exclude-tags": { type: "string" },
         target: { type: "string" },
@@ -236,6 +242,7 @@ async function main() {
   if (input) cli.input = input;
   if (values.out) cli.out = values.out;
   if (values["api-prefix"] !== undefined) cli.apiPrefix = values["api-prefix"];
+  if (values["base-url-env"] !== undefined) cli.baseUrlEnv = values["base-url-env"];
   if (values.target)
     cli.target = choice("target", values.target, ["hooks", "requests"]);
   if (values.library)

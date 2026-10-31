@@ -220,6 +220,12 @@ export interface ForgeConfig {
   out?: string;
   /** Stripped from every emitted route. */
   apiPrefix?: string;
+  /**
+   * The environment variable axios, `fetch` and Angular's `HttpClient` read the
+   * API's base URL from (`import.meta.env.<name>`); `@mrzr/api-client` finds its
+   * own. Default `VITE_API_URL`.
+   */
+  baseUrlEnv?: string;
   /** `"builtin"` writes a fetch runtime once; `"custom"` uses `runtime`. */
   client?: "builtin" | "custom";
   /** `"hooks"` adds the hooks of `library` and key factories. */
@@ -251,6 +257,7 @@ export interface ForgeOptions {
   input: Input;
   out: string;
   apiPrefix: string;
+  baseUrlEnv: string;
   client: "builtin" | "custom";
   target: "hooks" | "requests";
   library: LibraryName;

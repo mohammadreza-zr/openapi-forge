@@ -12,6 +12,8 @@ import { BANNER } from "./base.js";
 
 /** What the layer being written needs of its `client.ts`. */
 export interface Layer {
+  /** The environment variable axios, `fetch` and Angular read the base URL from. */
+  env: string;
   /** More than one backend service: the client names them (api-client's `services` plugin). */
   services: boolean;
   /** Some operation belongs to no service: it starts from the client's own base URL. */
@@ -31,20 +33,20 @@ const TRANSPORTS: Record<HttpClientName, Transport> = {
   fetch: {
     // Only a call of the main service starts from this base URL: when every
     // operation names a service of its own, there is nothing to export.
-    file: ({ main }) =>
+    file: ({ main, env }) =>
       main
         ? `/**
  * Where every generated call starts: the routes are written without the API's
- * prefix, which this base URL carries (VITE_API_URL=https://host/api/v1).
+ * prefix, which this base URL carries (${env}=https://host/api/v1).
  * This file is yours.
  */
-export const baseUrl: string = import.meta.env.VITE_API_URL ?? "";
+export const baseUrl: string = import.meta.env.${env} ?? "";
 `
         : null,
     packages: [],
   },
   axios: {
-    file: ({ main }) => `import axios from "axios";
+    file: ({ main, env }) => `import axios from "axios";
 
 /**
  * The instance every generated call goes through. This file is yours: interceptors,
@@ -52,12 +54,12 @@ export const baseUrl: string = import.meta.env.VITE_API_URL ?? "";
    main
      ? `
  * The routes are written without the API's prefix, which the base URL carries
- * (VITE_API_URL=https://host/api/v1).`
+ * (${env}=https://host/api/v1).`
      : `
  * Every operation names a service of its own, whose base URL is the call's.`
  }
  */
-export const http = axios.create(${main ? "{ baseURL: import.meta.env.VITE_API_URL }" : ""});
+export const http = axios.create(${main ? `{ baseURL: import.meta.env.${env} }` : ""});
 `,
     packages: ["axios"],
   },
@@ -90,15 +92,15 @@ export const apiClient = createClient({
     packages: ["@mrzr/api-client"],
   },
   angular: {
-    file: ({ main }) =>
+    file: ({ main, env }) =>
       main
         ? `/**
  * Where every generated call starts: the routes are written without the API's
- * prefix, which this base URL carries (VITE_API_URL=https://host/api/v1).
+ * prefix, which this base URL carries (${env}=https://host/api/v1).
  * HttpClient itself is injected into the services, so its interceptors apply.
  * This file is yours.
  */
-export const baseUrl: string = import.meta.env.VITE_API_URL ?? "";
+export const baseUrl: string = import.meta.env.${env} ?? "";
 `
         : null,
     packages: ["@angular/common", "@angular/core", "rxjs"],
@@ -114,7 +116,7 @@ export const httpPackages = (http: HttpClientName): string[] =>
 /** The `client.ts` to write, or `null` when this layer needs none. */
 export function clientSource(
   http: HttpClientName,
-  layer: Layer = { services: false, main: true },
+  layer: Layer = { services: false, main: true, env: "VITE_API_URL" },
 ): string | null {
   const { file, withServices } = TRANSPORTS[http];
   const chosen = layer.services && withServices ? withServices : file;

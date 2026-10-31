@@ -24,6 +24,7 @@ export function runtimeFiles(
   const client = clientSource(options.http, {
     services: layer.services.length > 0,
     main: layer.main,
+    env: options.baseUrlEnv,
   });
   if (client !== null) files.set("client.ts", client);
   if (hooks) files.set("hooks.ts", library.hooks(infinite));
