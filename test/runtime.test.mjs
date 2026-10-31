@@ -53,6 +53,12 @@ for (const http of ["fetch", "axios", "api-client"]) {
 
     const last = () => backend.seen.at(-1);
 
+    // api-client takes the path values as `addTemplateToUrl` in the config of the call; the others as an argument.
+    const getPet = (id, config = {}) =>
+      http === "api-client"
+        ? api.pets.getPet({ ...config, addTemplateToUrl: { pet_id: id } })
+        : api.pets.getPet(id, config);
+
     test("a query repeats array keys and leaves out what is empty", async () => {
       // api-client and axios take the query as `params` in the config of the call.
       const listPets = (query) =>
@@ -75,7 +81,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
     });
 
     test("a path argument is encoded into the route", async () => {
-      await api.pets.getPet("a b/c");
+      await getPet("a b/c");
       assert.equal(last().url, "/api/v1/pets/a%20b%2Fc");
     });
 
@@ -88,10 +94,9 @@ for (const http of ["fetch", "axios", "api-client"]) {
     });
 
     test("an upload is sent as multipart form data", async () => {
-      await api.pets.uploadPhoto(
-        "7",
-        multipart(http, { file: new Blob(["bytes"], { type: "text/plain" }) }),
-      );
+      const photo = multipart(http, { file: new Blob(["bytes"], { type: "text/plain" }) });
+      if (http === "api-client") await api.pets.uploadPhoto(photo, { addTemplateToUrl: { pet_id: "7" } });
+      else await api.pets.uploadPhoto("7", photo);
       assert.equal(last().url, "/api/v1/pets/7/photo");
       assert.match(
         last().headers["content-type"],
@@ -107,7 +112,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
         "X-Trace": "a",
       });
       try {
-        await api.pets.getPet("1", { headers: { "X-Trace": "b" } });
+        await getPet("1", { headers: { "X-Trace": "b" } });
         assert.equal(last().headers["x-token"], "one");
         assert.equal(last().headers["x-trace"], "b");
       } finally {
@@ -120,14 +125,14 @@ for (const http of ["fetch", "axios", "api-client"]) {
       if (http === "fetch") return t.skip("fetch has no base URL setting");
       const pet = payloadOf(
         http,
-        await api.pets.getPet("1", http === "axios" ? { baseURL: other.base } : { baseUrl: other.base }),
+        await getPet("1", http === "axios" ? { baseURL: other.base } : { baseUrl: other.base }),
       );
       assert.equal(pet.id, "other");
       assert.equal(other.seen.at(-1).url, "/api/v1/pets/1");
     });
 
     test("an answer with result: false is handed over as it is: the client does not judge it", async () => {
-      assert.deepEqual(payloadOf(http, await api.pets.getPet("fail")), {
+      assert.deepEqual(payloadOf(http, await getPet("fail")), {
         result: false,
         code: 7,
         message: "refused",
@@ -135,7 +140,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
     });
 
     test("an answer with a data field is the client's to unwrap: only @mrzr/api-client does", async () => {
-      const answer = payloadOf(http, await api.pets.getPet("wrapped"));
+      const answer = payloadOf(http, await getPet("wrapped"));
       if (http === "api-client")
         assert.deepEqual(answer, { id: "w", name: "wrapped" });
       else
@@ -148,12 +153,12 @@ for (const http of ["fetch", "axios", "api-client"]) {
     test("a failing status is the client's own error", async () => {
       // `fetch` resolves on any status: the Response is the answer, and its status is the caller's to read.
       if (http === "fetch") {
-        const response = await api.pets.getPet("missing");
+        const response = await getPet("missing");
         assert.equal(response.status, 404);
         assert.deepEqual(response.payload, { detail: "no such pet" });
         return;
       }
-      await assert.rejects(api.pets.getPet("missing"), (error) => {
+      await assert.rejects(getPet("missing"), (error) => {
         if (http === "axios") {
           assert.ok(api.require("axios").isAxiosError(error));
           assert.equal(error.response.status, 404);
@@ -168,7 +173,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
     });
 
     test("an answer that is no envelope is returned as it is", async () => {
-      assert.deepEqual(payloadOf(http, await api.pets.getPet("plain")), {
+      assert.deepEqual(payloadOf(http, await getPet("plain")), {
         id: "p",
         name: "plain",
       });
@@ -185,7 +190,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
       });
       api.client.setClientForTests(instance);
       try {
-        await api.pets.getPet("plain");
+        await getPet("plain");
         // parsed by axios itself, not bytes the generator read for it
         assert.deepEqual(seen, [{ id: "p", name: "plain" }]);
       } finally {
@@ -195,7 +200,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
 
     test("an aborted request ends the way the client ends it", async () => {
       const controller = new AbortController();
-      const pending = api.pets.getPet("slow", { signal: controller.signal });
+      const pending = getPet("slow", { signal: controller.signal });
       controller.abort();
       // fetch and axios reject; @mrzr/api-client settles a canceled call with `canceled: true`
       // unless it is set to throw on cancel.

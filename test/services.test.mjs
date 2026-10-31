@@ -39,7 +39,7 @@ test("an operation of a service goes through api-client's services plugin", asyn
     const pets = require(join(js, "pets.js"));
     const { apiClient } = require(join(js, "client.js"));
 
-    assert.equal((await pets.getPet("7")).data.id, "files");
+    assert.equal((await pets.getPet({ addTemplateToUrl: { pet_id: "7" } })).data.id, "files");
     assert.equal(files.seen.at(-1).url, "/api/v1/pets/7");
     assert.equal(main.seen.length, 0);
     assert.equal((await pets.listPets()).data.id, "main");

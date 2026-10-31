@@ -90,7 +90,7 @@ test("reactive libraries read each argument where the request is made", () => {
     );
     assert.match(
       pets,
-      /\(signal\) => listVisits\(toValue\(petId\), \{ params: toValue\(params\), signal \}\)/,
+      /\(signal\) => listVisits\(\{ addTemplateToUrl: \{ pet_id: toValue\(petId\) \}, params: toValue\(params\), signal \}\)/,
     );
     assert.match(
       pets,
@@ -229,7 +229,9 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   assert.match(angular, /firstValueFrom\(service\.getPet\(toValue\(petId\)\)\)/);
   // @mrzr/api-client is called straight too, with its own config and answer.
   const apiClient = build({}).get("pets.ts");
-  assert.match(apiClient, /apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*\{\s*\.\.\.config,\s*addTemplateToUrl: \{ pet_id: petId \}/);
+  // Everything the config carries (the path values, the query, the headers) is the caller's: it goes to the client as it is.
+  assert.match(apiClient, /export function getPet\(config\?: RequestConfig<Pet>\) \{\s*return apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*config,/);
+  assert.match(apiClient, /\(signal\) => getPet\(\{ addTemplateToUrl: \{ pet_id: petId \}, signal \}\)/);
   assert.match(apiClient, /config\?: RequestConfig<Pet>/);
   assert.match(apiClient, /import type \{[^}]*\bRequestConfig\b[^}]*\} from "@mrzr\/api-client"/);
 });

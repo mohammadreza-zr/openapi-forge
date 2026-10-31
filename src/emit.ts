@@ -115,6 +115,9 @@ export function emit(
   // a request function of theirs has no query argument of its own: the config
   // goes to the client as it is.
   const queryInConfig = style === "api-client" || style === "axios";
+  // api-client fills `{name}` of the route from `addTemplateToUrl` in the same
+  // config, so its request functions have no path arguments either.
+  const pathInConfig = style === "api-client";
   /** What a call resolves to, as the chosen client gives it. */
   const answerOf = (payload: string) =>
     style === "api-client"
@@ -789,8 +792,9 @@ export function emit(
         : [];
       const clash = style === "api-client" && operation.queryParams.some((item) => item.name === "ordering");
       const entry = clash && query ? `params: ${query} as never` : params[0];
-      const config = `{ ${[...(entry ? [entry] : []), signalEntry].join(", ")} }`;
-      const args = [...path, ...(headers ? [headers] : []), ...(body ? [body] : []), config];
+      const template = pathInConfig && path.length ? [`addTemplateToUrl: ${pathTemplate(operation, path)}`] : [];
+      const config = `{ ${[...template, ...(entry ? [entry] : []), signalEntry].join(", ")} }`;
+      const args = [...(pathInConfig ? [] : path), ...(headers ? [headers] : []), ...(body ? [body] : []), config];
       return `${operation.name}(${args.join(", ")})`;
     }
     const args = [...path, ...(query ? [query] : []), ...(headers ? [headers] : []), ...(body ? [body] : []), `{ ${signalEntry} }`];
@@ -1177,11 +1181,9 @@ export function emit(
    */
   function directRequestBlock(operation: OperationInfo, endpoints: string) {
     const payload = payloadFor(operation);
-    const args = operation.pathParams.map(
-      (item) =>
-        `${pathArg(operation, item)}: ${paramType(item)}`,
-    );
-    // The query is `params` in the config, which is the client's own.
+    // Path values, the query and the headers are in the config of the call:
+    // the client's own `addTemplateToUrl`, `params` and `headers`.
+    const args: string[] = [];
     if (operation.bodySchema) {
       args.push(
         `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
@@ -1190,17 +1192,6 @@ export function emit(
     args.push(`config?: RequestConfig<${payload}>`);
 
     const configLines = ["...config"];
-    if (operation.pathParams.length) {
-      const plain = /^(string|number|"[^"]*"( \| "[^"]*")*|-?\d+( \| -?\d+)*)$/;
-      const entries = operation.pathParams.map((item, index) => {
-        const argument = pathArgNames(operation)[index];
-        const value = plain.test(paramType(item)) ? argument : `String(${argument})`;
-        return item.name === value
-          ? value
-          : `${propertyName(item.name)}: ${value}`;
-      });
-      configLines.push(`addTemplateToUrl: { ${entries.join(", ")} }`);
-    }
     // The client knows a FormData, a URLSearchParams and a Blob when it sees one
     // and sets their Content-Type itself; only a text body, which it would
     // label JSON, is told what the document says.
@@ -1258,6 +1249,16 @@ export function emit(
     if (kind === "raw") return media;
     if (kind === "json" && media !== "application/json") return media;
     return null;
+  }
+
+  /** `{ pet_id: petId }` — what fills the route in api-client's `addTemplateToUrl` (it takes text and numbers). */
+  function pathTemplate(operation: OperationInfo, values: string[]) {
+    const plain = /^(string|number|"[^"]*"( \| "[^"]*")*|-?\d+( \| -?\d+)*)$/;
+    const entries = operation.pathParams.map((item, index) => {
+      const value = plain.test(paramType(item)) ? values[index] : `String(${values[index]})`;
+      return item.name === value ? value : `${propertyName(item.name)}: ${value}`;
+    });
+    return `{ ${entries.join(", ")} }`;
   }
 
   /** The route with its `{name}` filled in, each value written as a path segment. */

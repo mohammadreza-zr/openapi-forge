@@ -131,6 +131,7 @@ export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string
 /** List the pets — `GET /pets` */
 export function listPets(config?: RequestConfig<ApiListData<Pet>>) { … }   // api-client: the query is `params` in its own config
 listPets({ params: { kind: "cat" } });
+getPet({ addTemplateToUrl: { pet_id: "7" } });   // the path values are in the config too
 
 export function useListPetsQuery(params: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
 export function useGetPetQuery(petId: string, options?: ApiQueryOptions<…>) { … }
@@ -138,7 +139,7 @@ export function useCreatePetMutation(options?: ApiMutationOptions<Pet, CreatePet
 ```
 
 - A write takes **one variables object** (`{ petId, params, headers, body }` — only the parts it has), named `<Operation>Variables`.
-- Query and header parameters get `<Operation>Query` / `<Operation>Headers` types. The query is called `params`, as every built-in client calls it (`runtime.requestKeys.query` names it for a custom transport). With `@mrzr/api-client` and axios a request function has no query argument: the query is `params` in the config of the call, which goes to the client as it is (`listPets({ params: { kind: "cat" } })`); hooks keep it typed (`useListPetsQuery({ kind: "cat" })`). `fetch` and Angular's service take it as their first argument after the path. Path arguments keep the document's names.
+- Query and header parameters get `<Operation>Query` / `<Operation>Headers` types. The query is called `params`, as every built-in client calls it (`runtime.requestKeys.query` names it for a custom transport). With `@mrzr/api-client` a request function takes only its body and the client's own `config`: the query is `params` and the path values are `addTemplateToUrl` in that config (`listPets({ params: { kind: "cat" } })`, `getPet({ addTemplateToUrl: { pet_id: "7" } })`), and it goes to the client as it is. axios does the same for the query. The hooks keep everything typed (`useListPetsQuery({ kind: "cat" })`, `useGetPetQuery("7")`). `fetch` and Angular's service take the path values and `params` as arguments, since neither has a config to carry them; path arguments keep the document's names.
 - An operation with no tag goes to the `default` module.
 
 ## Hook libraries
