@@ -133,7 +133,7 @@ export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string
 /** List the pets — `GET /pets` */
 export function listPets(config?: RequestConfig<ApiListData<Pet>>) { … }   // api-client: the query is `params` in its own config
 listPets({ params: { kind: "cat" } });
-getPet({ addTemplateToUrl: { pet_id: "7" } });   // the path values are in the config too
+getPet({ addTemplateToUrl: { pet_id: "7" } });   // the path values are in the config too; getPet() does not compile
 
 export function useListPetsQuery(params: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
 export function useGetPetQuery(petId: string | undefined, options?: ApiQueryOptions<…>) { … }

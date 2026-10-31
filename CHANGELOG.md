@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+
+- **The config says what it must carry.** With `@mrzr/api-client` a request function whose route has path values, or whose query has a required parameter, no longer takes an optional config: `getFine(config: RequestConfig<Fine> & { addTemplateToUrl: { id: string } })`, and `params: <Operation>Query` joins the type when the query is required. axios does the same for a required query (`config: AxiosRequestConfig & { params: ListVisitsQuery }`). The config still goes to the client as it is; only its type is narrower, so `getFine()` with no id no longer compiles instead of asking for `/fines/{id}`. A body that may be left out is then typed `body: T | undefined`, since a required parameter cannot follow an optional one. `fetch` and Angular already took these as typed arguments.
+- Tests pin two things that were already true: a failed call is an error of the hook (`@mrzr/api-client` 3 rejects by default, `throwError: true`, so no option is written and `client.ts` stays `createClient()`), and a header declared on every operation is no warning with api-client or axios.
+
 ## 0.3.1
 
 Two things 0.3.0 dropped, put back: they are what an app that invalidates by group and passes a route param straight in relies on.

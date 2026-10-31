@@ -257,10 +257,28 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   // @mrzr/api-client is called straight too, with its own config and answer.
   const apiClient = build({}).get("pets.ts");
   // Everything the config carries (the path values, the query, the headers) is the caller's: it goes to the client as it is.
-  assert.match(apiClient, /export function getPet\(config\?: RequestConfig<Pet>\) \{\s*return apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*config,/);
+  assert.match(apiClient, /export function getPet\(config: RequestConfig<Pet> & \{ addTemplateToUrl: \{ pet_id: string \} \}\) \{\s*return apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*config,/);
   assert.match(apiClient, /\(signal\) => getPet\(\{ addTemplateToUrl: \{ pet_id: petId! \}, signal \}\)/);
-  assert.match(apiClient, /config\?: RequestConfig<Pet>/);
+  assert.match(apiClient, /RequestConfig<Pet> & \{ addTemplateToUrl/);
   assert.match(apiClient, /import type \{[^}]*\bRequestConfig\b[^}]*\} from "@mrzr\/api-client"/);
+});
+
+test("a header every operation declares is no warning where the client takes headers in its config", () => {
+  // `Accept-Language` on every operation: api-client and axios carry headers in
+  // their own config, so there is nothing to report; only a custom transport
+  // that takes none (`runtime.requestKeys.headers`) cannot send them.
+  const document = clients();
+  for (const item of Object.values(document.paths))
+    for (const operation of Object.values(item))
+      if (operation && typeof operation === "object" && "responses" in operation)
+        operation.parameters = [
+          ...(operation.parameters ?? []),
+          { name: "Accept-Language", in: "header", schema: { type: "string" } },
+        ];
+  for (const http of ["api-client", "axios"]) {
+    const { problems } = emit(document, resolveOptions({ http }), "x");
+    assert.deepEqual(problems.filter((item) => /header/i.test(item.message)), [], http);
+  }
 });
 
 test("fetch answers a raw Response, so it has requests only", () => {
@@ -381,6 +399,21 @@ test("the api-client client is one line the project edits: its own client, nothi
   assert.doesNotMatch(client, /configureClient/);
   // The placeholder instance has the client's own defaults: no option of ours (worker, baseUrl, …).
   assert.match(client, /export const apiClient = createClient\(\);/);
+});
+
+test("api-client and axios say in the signature what the config must carry", () => {
+  // The config still goes to the client as it is; only its type is narrowed,
+  // so a missing path value or required query is an error at compile time.
+  const apiClient = build({}).get("pets.ts");
+  assert.match(apiClient, /config: RequestConfig<Pet> & \{ addTemplateToUrl: \{ pet_id: string \} \}/);
+  // Nothing required, nothing narrowed: the config stays optional.
+  assert.match(apiClient, /export function listPets\(config\?: RequestConfig<ApiListData<Pet>>\)/);
+  // A required query is `params` of the same config, and a body that may be left out cannot precede a required config.
+  assert.match(apiClient, /addTemplateToUrl: \{ pet_id: string \}; params: ListVisitsQuery \}/);
+  assert.match(apiClient, /uploadPhoto\(body: FormData \| undefined, config: RequestConfig<null> & /);
+  const axios = build({ http: "axios" }).get("pets.ts");
+  assert.match(axios, /export function listVisits\(petId: string, config: AxiosRequestConfig & \{ params: ListVisitsQuery \}\)/);
+  assert.match(axios, /export function getPet\(petId: string, config\?: AxiosRequestConfig\)/);
 });
 
 test("no built-in client sets an option that changes how its client behaves", () => {

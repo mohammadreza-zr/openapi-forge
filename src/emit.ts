@@ -704,6 +704,31 @@ export function emit(
   /** A `= {}` default is only legal while every query parameter is optional. */
   const queryIsOptional = (operation: OperationInfo) =>
     !operation.queryParams.some((item) => item.required);
+  /**
+   * What the config of a call must carry, as the client names it, for the
+   * signature to say so: the path values (api-client's `addTemplateToUrl`) and
+   * a required query (`params`). The config still goes to the client as it is.
+   */
+  function requiredConfig(operation: OperationInfo) {
+    const plain = /^(string|number|"[^"]*"( \| "[^"]*")*|-?\d+( \| -?\d+)*)$/;
+    const needs: string[] = [];
+    if (pathInConfig && operation.pathParams.length) {
+      const entries = operation.pathParams.map((item) => {
+        const type = paramType(item);
+        return `${propertyName(item.name)}: ${plain.test(type) ? type : "string"}`;
+      });
+      needs.push(`addTemplateToUrl: { ${entries.join("; ")} }`);
+    }
+    if (queryInConfig && !queryIsOptional(operation)) {
+      needs.push(`${queryArg}: ${queryTypeName(operation)}`);
+    }
+    return needs;
+  }
+  /** `body?: T`, unless a required config follows it: a required parameter cannot come after an optional one. */
+  const bodyArg = (operation: OperationInfo, configRequired: boolean) =>
+    operation.bodyRequired || !configRequired
+      ? `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`
+      : `body: ${bodyTypeName(operation)} | undefined`;
   const headersTypeName = (operation: OperationInfo) => `${pascalCase(operation.name)}Headers`;
   /** Likewise: a `= {}` default only while no header is required. */
   const headersAreOptional = (operation: OperationInfo) =>
@@ -1199,12 +1224,13 @@ export function emit(
     // Path values, the query and the headers are in the config of the call:
     // the client's own `addTemplateToUrl`, `params` and `headers`.
     const args: string[] = [];
-    if (operation.bodySchema) {
-      args.push(
-        `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
-      );
-    }
-    args.push(`config?: RequestConfig<${payload}>`);
+    const needs = requiredConfig(operation);
+    if (operation.bodySchema) args.push(bodyArg(operation, needs.length > 0));
+    args.push(
+      needs.length
+        ? `config: RequestConfig<${payload}> & { ${needs.join("; ")} }`
+        : `config?: RequestConfig<${payload}>`,
+    );
 
     const configLines = ["...config"];
     // The client knows a FormData, a URLSearchParams and a Blob when it sees one
@@ -1309,12 +1335,15 @@ export function emit(
         `headers: ${headersTypeName(operation)}${headersAreOptional(operation) ? " = {}" : ""}`,
       );
     }
-    if (operation.bodySchema) {
+    const needs = requiredConfig(operation);
+    if (operation.bodySchema) args.push(bodyArg(operation, needs.length > 0));
+    if (style === "axios") {
       args.push(
-        `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
+        needs.length
+          ? `config: AxiosRequestConfig & { ${needs.join("; ")} }`
+          : "config?: AxiosRequestConfig",
       );
     }
-    if (style === "axios") args.push("config?: AxiosRequestConfig");
     if (style === "fetch") args.push("init?: RequestInit");
 
     const kind = bodyKind(operation.bodyMediaType);

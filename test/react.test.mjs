@@ -37,7 +37,11 @@ describe("the React hooks", () => {
 
   before(async () => {
     server = await serve((request) =>
-      request.url.startsWith("/api/v1/pages") ? pagesApi(request) : petApi(request),
+      request.url.startsWith("/api/v1/pages")
+        ? pagesApi(request)
+        : request.url.endsWith("/pets/boom")
+          ? { status: 500, body: { message: "boom" } }
+          : petApi(request),
     );
   });
   after(async () => {
@@ -136,6 +140,21 @@ describe("the React hooks", () => {
           server.asked().includes("GET /api/v1/pets/1") &&
             server.asked().includes("GET /api/v1/pets/2"),
         );
+        await view.unmount();
+      });
+
+      // api-client 3 rejects a failed call by default (`throwError: true`), so no
+      // option is written for it; this holds the hooks to it.
+      test("a failed call is an error of the hook, not an answer it keeps", async () => {
+        let latest;
+        const Probe = ({ id }) => {
+          latest = { ...api.useGetPetQuery(id) };
+          return null;
+        };
+        const view = mount(wrap, Probe);
+        await view.render({ id: "boom" });
+        await eventually(() => latest.error != null, "the error");
+        assert.equal(latest.data, undefined);
         await view.unmount();
       });
 
