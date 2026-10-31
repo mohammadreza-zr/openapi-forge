@@ -1,9 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+- **`@mrzr/api-client`: a multipart body may be a plain object.** The body is typed `UploadPhotoBody | FormData` and the call passes api-client's own `isFormData: true`, which turns a plain object into the form (a file or list per entry, an object as a JSON field) and sends a `FormData` as it is, so `uploadPhoto({ file }, { addTemplateToUrl: { pet_id } })` works without building the `FormData`. The document says the body is multipart; the client does the rest. fetch, axios and Angular still take a `FormData`.
+
 ## 0.3.2
 
 - **The config says what it must carry.** With `@mrzr/api-client` a request function whose route has path values, or whose query has a required parameter, no longer takes an optional config: `getFine(config: RequestConfig<Fine> & { addTemplateToUrl: { id: string } })`, and `params: <Operation>Query` joins the type when the query is required. axios does the same for a required query (`config: AxiosRequestConfig & { params: ListVisitsQuery }`). The config still goes to the client as it is; only its type is narrower, so `getFine()` with no id no longer compiles instead of asking for `/fines/{id}`. A body that may be left out is then typed `body: T | undefined`, since a required parameter cannot follow an optional one. `fetch` and Angular already took these as typed arguments.
-- **`@mrzr/api-client`: a multipart body may be a plain object.** The body is typed `UploadPhotoBody | FormData` and the call passes api-client's own `isFormData: true`, which turns a plain object into the form (a file or list per entry, an object as a JSON field) and sends a `FormData` as it is, so `uploadPhoto({ file }, { addTemplateToUrl: { pet_id } })` works without building the `FormData`. The document says the body is multipart; the client does the rest. fetch, axios and Angular still take a `FormData`.
 - Tests pin two things that were already true: a failed call is an error of the hook (`@mrzr/api-client` 3 rejects by default, `throwError: true`, so no option is written and `client.ts` stays `createClient()`), and a header declared on every operation is no warning with api-client or axios.
 
 ## 0.3.1
