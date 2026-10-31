@@ -77,14 +77,14 @@ npx openapi-forge --input swagger.json --out src/api/generated --api-prefix /api
 ```
 
 With the default `client: "builtin"` small files are written **once** next to the layer
-(`hooks.ts`, `types.ts`, and `client.ts` for the clients that have an instance — api-client and axios). They are yours to edit and are never overwritten
+(`client.ts`, `hooks.ts` and `types.ts`). They are yours to edit and are never overwritten
 (`--force-runtime` resets them). The hooks need the package of the library they wrap —
 `@tanstack/react-query` v5 by default, see [Hook libraries](#hook-libraries).
 
 ```ts
 // src/api/generated/client.ts — written once, yours to edit. The default client is @mrzr/api-client:
-// give it the base URL, the tokens and the plugins it needs.
-export const apiClient = createClient({ baseUrl: "https://api.example.com/v1" });
+// it finds its base URL in the environment (VITE_API_URL, …); give it the tokens and plugins it needs.
+export const apiClient = createClient();
 ```
 
 ```ts
@@ -185,16 +185,16 @@ Four clients, four different worlds. The generator does not put one behind anoth
 
 | `http` | what a generated function is | returns | `client.ts` | needs |
 | --- | --- | --- | --- | --- |
-| `api-client` (default) | `apiClient.get(…)` with api-client's own `RequestConfig` | api-client's `IRes<T>` (`data`, `statusCode`, `message`, …) | `export const apiClient = createClient();` | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) |
-| `axios` | `http.get<T>(url, config)` on your instance, with an `AxiosRequestConfig` | `AxiosResponse<T>`; a failed status is an `AxiosError` | `export const http = axios.create();` | `axios` |
-| `fetch` | `fetch(url, init)` with a `RequestInit` | the platform's `Response`; a failed status resolves, as `fetch` does. **Functions only** (`target: "requests"`): a raw `Response` is a stream read once and a 404 is not an error, so there is nothing a query hook could cache or retry | none | nothing |
-| `angular` | a method of an `@Injectable` service per tag, over the injected `HttpClient` | an `Observable<T>`; a failed status is an `HttpErrorResponse` | none | `@angular/common`, `@angular/core`, `rxjs` |
+| `api-client` (default) | `apiClient.get(…)` with api-client's own `RequestConfig` | api-client's `IRes<T>` (`data`, `statusCode`, `message`, …) | `export const apiClient = createClient();` — finds its base URL itself | [`@mrzr/api-client`](https://www.npmjs.com/package/@mrzr/api-client) |
+| `axios` | `http.get<T>(url, config)` on your instance, with an `AxiosRequestConfig` | `AxiosResponse<T>`; a failed status is an `AxiosError` | `export const http = axios.create({ baseURL: baseUrlFromEnv() });` | `axios` |
+| `fetch` | `fetch(url, init)` with a `RequestInit` | the platform's `Response`; a failed status resolves, as `fetch` does. **Functions only** (`target: "requests"`): a raw `Response` is a stream read once and a 404 is not an error, so there is nothing a query hook could cache or retry | `export const baseUrl = baseUrlFromEnv();` | nothing |
+| `angular` | a method of an `@Injectable` service per tag, over the injected `HttpClient` | an `Observable<T>`; a failed status is an `HttpErrorResponse` | `export const baseUrl = baseUrlFromEnv();` | `@angular/common`, `@angular/core`, `rxjs` |
 
-`client.ts` (axios and api-client) is yours: base URL, interceptors, tokens and plugins go on the instance there. `fetch` is a function of the platform and Angular injects its `HttpClient`, so neither writes a `client.ts`; Angular's base URL is an interceptor, as in any Angular app.
+`client.ts` is yours: interceptors, tokens and plugins go on the instance there. **Every client reads where the API lives from the environment**: api-client finds its base URL itself, and for axios, `fetch` and Angular's `HttpClient`, which cannot, `client.ts` reads it the same way (`VITE_API_URL`, `VITE_API_BASE_URL`, `API_URL`, … — the names api-client reads — from `import.meta.env`, `process.env` or `window.__API_BASE_URL__`). The routes are written without `apiPrefix`, so that base URL carries it (`https://host/api/v1`). A framework that only replaces literal `process.env.NAME` reads needs the name written out in `client.ts`.
 
-- **api-client**: an operation of a backend service is `apiClient.service("files").get(…)` through api-client's `services` plugin (`client.ts` is written with `services(API_SERVICE_BASE_URLS)` when the document has services; add it by hand to a `client.ts` that exists). A header parameter is not an argument of these functions — headers are api-client's own (`createClient({ headers })`, or `headers` in the config of one call). `delete` takes no body, so a `DELETE` operation with one is left out and listed.
+- **api-client**: an operation of a backend service is `apiClient.service("files").get(…)` through api-client's `services` plugin (`client.ts` is written with `services(API_SERVICE_BASE_URLS)` only when the document has **several** services — one service is just the client's own base URL, and no plugin is written; add the plugin by hand to a `client.ts` that exists). A header parameter is not an argument of these functions — headers are api-client's own (`createClient({ headers })`, or `headers` in the config of one call). `delete` takes no body, so a `DELETE` operation with one is left out and listed.
 - **axios**: the call's config is the second-to-last argument of a body-less call, spread into the request; a query list is written the way axios writes it (`ids[]=a`) unless the instance has a `paramsSerializer`; the run lists each such parameter.
-- **fetch**: it has no base URL, so the route of a main-service call keeps the document's whole path (`/api/v1/pets` — it works same-origin or behind a dev proxy as generated), and so does an Angular service call (your interceptor adds only the origin); while a call of a backend service starts from that service's base URL, which carries the prefix. The query string is built in the function from the document's parameters (`URLSearchParams`), a JSON body is `JSON.stringify`-ed with its `Content-Type`, and reading the answer (`response.json()`) is yours.
+- **fetch**: every call starts from the `baseUrl` of `client.ts` (or its own service's base URL). The query string is built in the function from the document's parameters (`URLSearchParams`), a JSON body is `JSON.stringify`-ed with its `Content-Type`, and reading the answer (`response.json()`) is yours.
 - **Angular**: hooks are Angular Query's (`library: "angular-query"`), and a hook injects the tag's service (`inject(PetsService)`). `HttpClient` takes no `AbortSignal`; cancel by unsubscribing from the `Observable`.
 
 A multipart body is typed `FormData`; a form body is `URLSearchParams` (`HttpParams` for Angular) — the bodies each client sends as they are — so you build them yourself.
@@ -274,7 +274,7 @@ Give `input` a folder of documents (named after their files) or `{ name: fileOrU
 
 - Run in a terminal once to answer the questions — the answers (`main` service, `owners`) are written to `decisionsFile` and commit with the code.
 - `--check` and CI never ask; they fail listing what is still undecided.
-- Operations carry `x-service`, and `services.ts` exports `API_SERVICE_BASE_URLS` for the per-service base URL (a literal map, or a function of yours with `runtime.services.fn`). With `@mrzr/api-client` that map is handed to its `services` plugin and a call is `apiClient.service(name)`; axios gets `baseURL`, `fetch` and Angular the URL in front of the route.
+- Operations carry `x-service`, and `services.ts` exports `API_SERVICE_BASE_URLS` for the per-service base URL (a literal map, or a function of yours with `runtime.services.fn`). Services matter only when there are **several**; with one, its operations are written like any others. With `@mrzr/api-client` that map is handed to its `services` plugin and a call is `apiClient.service(name)`; axios gets `baseURL`, `fetch` and Angular the URL in front of the route.
 - The run prints what was merged, which owner was chosen, which operations use a component owned by another service, and which saved choices no longer apply. `--verbose` lists the identical duplicates a merge folded together.
 
 ## Types and naming

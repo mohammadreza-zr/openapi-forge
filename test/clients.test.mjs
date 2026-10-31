@@ -188,10 +188,16 @@ test("http picks what the built-in client sends with; the default is @mrzr/api-c
   const fetchFiles = () => runtimeFiles(resolveOptions({ http: "fetch", target: "requests" }));
   // axios and @mrzr/api-client have an instance the project owns; fetch is the
   // platform's function and Angular injects its HttpClient, so neither has a file.
-  assert.match(files("axios").get("client.ts"), /export const http = axios\.create\(\);/);
+  assert.match(files("axios").get("client.ts"), /export const http = axios\.create\(\{ baseURL: baseUrlFromEnv\(\) \}\);/);
   assert.match(files("api-client").get("client.ts"), /createClient\(\)/);
-  assert.equal(fetchFiles().has("client.ts"), false);
-  assert.equal(files("angular", { library: "angular-query" }).has("client.ts"), false);
+  // fetch and Angular's HttpClient have no instance to own, but they cannot find
+  // their base URL either: `client.ts` exports the one read from the environment.
+  assert.match(fetchFiles().get("client.ts"), /export const baseUrl = baseUrlFromEnv\(\);/);
+  assert.match(files("angular", { library: "angular-query" }).get("client.ts"), /export const baseUrl = baseUrlFromEnv\(\);/);
+  // Every client reads it from the same variables; api-client finds its own.
+  for (const http of ["axios", "fetch", "angular"])
+    assert.match(runtimeFiles(resolveOptions({ http, target: "requests" })).get("client.ts"), /"VITE_API_URL"/, http);
+  assert.doesNotMatch(files("api-client").get("client.ts"), /baseUrlFromEnv/);
 });
 
 test("no client keeps a wrapper: each one is called as it is", () => {
@@ -216,7 +222,7 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   assert.doesNotMatch(axios, /paramsSerializer/);
   // fetch: the platform function, its init, its Response.
   const fetched = build({ http: "fetch", target: "requests" }).get("pets.ts");
-  assert.match(fetched, /export function getPet\(petId: string, init\?: RequestInit\) \{\s*return fetch\(petsEndpoints\.getPet\.replace/);
+  assert.match(fetched, /export function getPet\(petId: string, init\?: RequestInit\) \{\s*return fetch\(baseUrl \+ petsEndpoints\.getPet\.replace/);
   assert.match(fetched, /const search = new URLSearchParams\(\);/);
   assert.match(fetched, /for \(const item of params\.ids \?\? \[\]\) search\.append\("ids", String\(item\)\);/);
   // No hook: a raw Response is not something to cache or to retry.
@@ -227,7 +233,7 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   const angular = pets("angular", "angular-query");
   assert.match(angular, /import \{ HttpClient \} from "@angular\/common\/http"/);
   assert.match(angular, /@Injectable\(\{ providedIn: "root" \}\)\s*export class PetsService \{\s*private readonly http = inject\(HttpClient\);/);
-  assert.match(angular, /getPet\(petId: string\) \{\s*return this\.http\.get<PetEnvelope>\(petsEndpoints\.getPet\.replace/);
+  assert.match(angular, /getPet\(petId: string\) \{\s*return this\.http\.get<PetEnvelope>\(baseUrl \+ petsEndpoints\.getPet\.replace/);
   assert.match(angular, /const service = inject\(PetsService\);/);
   assert.match(angular, /firstValueFrom\(service\.getPet\(toValue\(petId\)\)\)/);
   // @mrzr/api-client is called straight too, with its own config and answer.

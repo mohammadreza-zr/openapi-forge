@@ -20,8 +20,7 @@ import { firstValueFrom } from "rxjs";
 import * as pets from "@api/pets";
 
 const [port, otherPort] = process.argv.slice(2);
-// A route is the document's whole path (`/api/v1/pets`): only the origin goes in front.
-const base = `http://127.0.0.1:${port}`;
+const base = `http://127.0.0.1:${port}/api/v1`;
 const asked = (): Promise<{ url: string; headers: Record<string, string> }[]> =>
   fetch(`http://127.0.0.1:${port}/seen`).then((response) => response.json());
 

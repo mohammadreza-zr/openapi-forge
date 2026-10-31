@@ -50,7 +50,7 @@ async function main() {
       provideTanStackQuery(client),
       ...(http === "angular" ? [provideHttpClient(
           withFetch(),
-          withInterceptors([(request, next) => next(request.clone({ url: `${base}${request.url}` }))]),
+          withInterceptors([(request, next) => next(request.clone({ url: `${base}/api/v1${request.url}` }))]),
         )] : []),
     ],
   });

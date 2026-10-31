@@ -74,25 +74,17 @@ test("a multipart body is a FormData, whatever the client", () => {
   }
 });
 
-test("fetch and Angular have no base URL, so a main-service route keeps the whole path", () => {
-  const route = (http) =>
-    run({ http, library: http === "angular" ? "angular-query" : "react-query", target: http === "fetch" ? "requests" : "hooks" }).files.get("pets.ts").match(/getPet: "([^"]+)"/)[1];
-  assert.equal(route("axios"), "/pets/{pet_id}");
-  assert.equal(route("api-client"), "/pets/{pet_id}");
-  // fetch and HttpClient have no base URL in the generated code: the whole path stays.
-  assert.equal(route("fetch"), "/api/v1/pets/{pet_id}");
-  assert.equal(route("angular"), "/api/v1/pets/{pet_id}");
-});
-
-test("a service with no base URL is reported, not left to fail at start-up", () => {
-  const spec = petstore();
-  for (const item of Object.values(spec.paths))
-    for (const operation of Object.values(item)) operation["x-service"] = "pets";
-  const said = (patch) =>
-    emit(spec, options(patch), "x").problems.map((item) => `${item.where} ${item.message}`).join("\n");
-  assert.match(said({}), /service pets has no base URL/);
-  assert.doesNotMatch(said({ runtime: { services: { baseUrls: { pets: "https://pets.test" } } } }), /base URL/);
-  assert.doesNotMatch(said({ runtime: { services: { module: "./env", fn: "serviceBaseUrl" } } }), /base URL/);
+test("every client starts a call from a base URL, and the route has lost the prefix", () => {
+  const files = (http) =>
+    run({ http, library: http === "angular" ? "angular-query" : "react-query", target: http === "fetch" ? "requests" : "hooks" }).files.get("pets.ts");
+  for (const http of ["axios", "api-client", "fetch", "angular"])
+    assert.match(files(http), /getPet: "\/pets\/\{pet_id\}"/, http);
+  // axios has it on the instance, api-client finds its own; fetch and HttpClient read it from client.ts.
+  assert.match(files("fetch"), /import \{ baseUrl \} from "\.\/client"/);
+  assert.match(files("fetch"), /fetch\(baseUrl \+ petsEndpoints\.getPet/);
+  assert.match(files("angular"), /this\.http\.get<[^>]+>\(baseUrl \+ petsEndpoints\.getPet/);
+  assert.doesNotMatch(files("axios"), /baseUrl|baseURL/);
+  assert.doesNotMatch(files("api-client"), /baseUrl|baseURL/);
 });
 
 test("tags can be included or excluded", () => {
@@ -140,28 +132,59 @@ test("transform hooks rename, rewrite and drop", () => {
   assert.match(files.get("index.ts"), /export \* from "\.\/pets-api";/);
 });
 
-test("services mark operations with their base URL", () => {
+/** The petstore split into two backend services: the pets and the owners. */
+const twoServices = () => {
   const spec = petstore();
-  for (const item of Object.values(spec.paths))
-    for (const operation of Object.values(item)) operation["x-service"] = "pets";
-  const files = emit(
-    spec,
-    options({ runtime: { services: { baseUrls: { pets: "https://pets.test" } } } }),
-    "x",
-  ).files;
+  for (const [path, item] of Object.entries(spec.paths))
+    for (const operation of Object.values(item))
+      operation["x-service"] = path.endsWith("/owners") ? "owners" : "pets";
+  return spec;
+};
+
+test("several services mark operations with their base URL", () => {
+  const spec = twoServices();
+  const urls = { pets: "https://pets.test", owners: "https://owners.test" };
+  const files = emit(spec, options({ runtime: { services: { baseUrls: urls } } }), "x").files;
   assert.match(files.get("services.ts"), /"pets": "https:\/\/pets\.test"/);
+  assert.match(files.get("services.ts"), /"owners": "https:\/\/owners\.test"/);
   assert.match(files.get("pets.ts"), /baseURL: config\?\.baseURL \?\? API_SERVICE_BASE_URLS\["pets"\]/);
   // @mrzr/api-client keeps a service of its own in its `services` plugin: the call names the service, nothing else.
   const apiClient = emit(spec, options({ http: "api-client" }), "x");
-  assert.deepEqual(apiClient.services, ["pets"]);
+  assert.deepEqual(apiClient.services, ["owners", "pets"]);
   assert.match(apiClient.files.get("pets.ts"), /apiClient\.service\("pets"\)\.get</);
   assert.doesNotMatch(apiClient.files.get("pets.ts"), /baseUrl|API_SERVICE_BASE_URLS/);
-  const withServices = runtimeFiles(resolveOptions({ http: "api-client" }), ["pets"]).get("client.ts");
+  const withServices = runtimeFiles(resolveOptions({ http: "api-client" }), ["owners", "pets"]).get("client.ts");
   assert.match(withServices, /import \{ services \} from "@mrzr\/api-client\/services"/);
   assert.match(withServices, /plugins: \[services\(API_SERVICE_BASE_URLS\)\]/);
   assert.doesNotMatch(runtimeFiles(resolveOptions({ http: "api-client" })).get("client.ts"), /services/);
   const fetched = emit(spec, options({ http: "fetch", target: "requests" }), "x").files.get("pets.ts");
   assert.match(fetched, /fetch\(API_SERVICE_BASE_URLS\["pets"\] \+ petsEndpoints\./);
+});
+
+test("one service is the client's own base URL: no plugin, no service map entries", () => {
+  const spec = petstore();
+  for (const item of Object.values(spec.paths))
+    for (const operation of Object.values(item)) operation["x-service"] = "pets";
+  for (const http of ["api-client", "axios"]) {
+    const result = emit(spec, options({ http }), "x");
+    assert.deepEqual(result.services, [], http);
+    assert.doesNotMatch(result.files.get("pets.ts"), /\.service\(|API_SERVICE_BASE_URLS|baseURL|baseUrl/, http);
+    assert.doesNotMatch(result.files.get("services.ts"), /pets/, http);
+    assert.deepEqual(result.problems.filter((item) => /base URL/.test(item.message)), [], http);
+  }
+  // fetch starts a call from the base URL of client.ts, not from a service.
+  assert.match(emit(spec, options({ http: "fetch", target: "requests" }), "x").files.get("pets.ts"), /fetch\(baseUrl \+ petsEndpoints\.listPets/);
+});
+
+test("a service with no base URL is reported, not left to fail at start-up", () => {
+  const spec = twoServices();
+  const said = (patch) =>
+    emit(spec, options(patch), "x").problems.map((item) => `${item.where} ${item.message}`).join("\n");
+  assert.match(said({}), /service pets has no base URL/);
+  assert.match(said({}), /service owners has no base URL/);
+  const urls = { pets: "https://pets.test", owners: "https://owners.test" };
+  assert.doesNotMatch(said({ runtime: { services: { baseUrls: urls } } }), /base URL/);
+  assert.doesNotMatch(said({ runtime: { services: { module: "./env", fn: "serviceBaseUrl" } } }), /base URL/);
 });
 
 test("the banner names the generator and the source", () => {

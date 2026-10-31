@@ -21,8 +21,7 @@ export function runtimeFiles(
     "types.ts",
     `${BANNER}\n${types.imports}${typesBase()}${types.body}`,
   );
-  const client = clientSource(options.http, services.length > 0);
-  if (client !== null) files.set("client.ts", client);
+  files.set("client.ts", clientSource(options.http, services.length > 0));
   if (hooks) files.set("hooks.ts", library.hooks(infinite));
   return files;
 }

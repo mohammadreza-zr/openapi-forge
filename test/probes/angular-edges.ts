@@ -33,7 +33,7 @@ async function main() {
         withFetch(),
         withInterceptors([
           (request, next) =>
-            next(request.clone({ url: `http://127.0.0.1:${port}${request.url}` })),
+            next(request.clone({ url: `http://127.0.0.1:${port}/api/v1${request.url}` })),
         ]),
       ),
     ],

@@ -91,7 +91,7 @@ describe("the code that is written", () => {
     assert.match(text, /export function remove\(\s*body: RemoveBody,/);
     assert.match(text, /http\.delete<null>\(\s*edgesEndpoints\.remove,\s*\{[^}]*data: body/s);
     assert.match(edgesTs({ http: "fetch", target: "requests" }), /method: "DELETE", headers: requestHeaders, body: JSON\.stringify\(body\)/);
-    assert.match(edgesTs({ http: "angular", library: "angular-query" }), /this\.http\.delete<null>\(edgesEndpoints\.remove, \{ body \}\)/);
+    assert.match(edgesTs({ http: "angular", library: "angular-query" }), /this\.http\.delete<null>\(baseUrl \+ edgesEndpoints\.remove, \{ body \}\)/);
     const custom = written({ client: "custom" });
     assert.doesNotMatch(custom.files.get("edges.ts"), /function remove\(/);
     assert.ok(custom.problems.some(({ message }) => /DELETE/.test(message)));

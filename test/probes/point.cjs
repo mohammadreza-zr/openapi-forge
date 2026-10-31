@@ -17,27 +17,27 @@ function pointClient(http, client, req, base, headers = {}) {
       req("@mrzr/api-client").createClient({ baseUrl: base, headers }),
     );
   } else if (http === "fetch") {
-    // A `fetch` route is the document's whole path (`/api/v1/pets`): only the origin goes in front.
-    pointFetch(base.replace(/\/api\/v1$/, ""), headers);
+    // `fetch` starts every call from the `baseUrl` of `client.ts`.
+    client.setClientForTests(base);
+    pointFetch(headers);
   }
   // Angular's HttpClient has no base URL: the probes put it in an interceptor.
 }
 
 /**
- * `fetch` is the platform's function and the generated code calls it with a
- * route, so the test points it at the server: the base goes in front of a route
- * and the default headers go with every call. The answer is the real `Response`;
+ * `fetch` is the platform's function and the generated code calls it with the
+ * `baseUrl` of `client.ts` (pointed at the server above): the test only adds the
+ * default headers to every call. The answer is the real `Response`;
  * the test also reads its body once, eagerly, and keeps it as `response.payload`
  * (JSON parsed, text as it is, anything else a Blob, an empty body `null`), so a
  * hook's `data` can be compared without waiting on a stream.
  */
-function pointFetch(base, headers = {}) {
+function pointFetch(headers = {}) {
   const real = (globalThis.__realFetch ??= globalThis.fetch);
   globalThis.fetch = async (input, init = {}) => {
-    const url = typeof input === "string" && input.startsWith("/") ? base + input : input;
     const merged = new Headers(headers);
     for (const [name, value] of new Headers(init.headers)) merged.set(name, value);
-    const response = await real(url, { ...init, headers: merged });
+    const response = await real(input, { ...init, headers: merged });
     const type = (response.headers.get("content-type") ?? "").toLowerCase();
     const copy = response.clone();
     let payload;

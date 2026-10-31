@@ -411,6 +411,18 @@ export function emit(
   function collectOperations(): OperationInfo[] {
     const operations = [];
     const taken = new Set();
+    // Backend services only matter when there are several: one service is the
+    // client's own base URL, so its operations are written like any others.
+    const serviceNames = new Set<string>();
+    for (const pathItem of Object.values(spec.paths ?? {})) {
+      for (const method of HTTP_METHODS) {
+        const named = pathItem?.[method]?.["x-service"];
+        if (named) serviceNames.add(named);
+      }
+    }
+    const several = serviceNames.size > 1;
+    const serviceOf = (operation: OperationObject) =>
+      several ? (operation["x-service"] ?? null) : null;
 
     for (const [path, pathItem] of Object.entries(spec.paths ?? {})) {
       if (!pathItem || typeof pathItem !== "object") continue;
@@ -502,14 +514,9 @@ export function emit(
           name,
           method,
           path,
-          // The base URL already carries the prefix, so the route does not. `fetch`
-          // and Angular's `HttpClient` have no base URL in the generated code: a call
-          // of the main service starts from the origin, so its route keeps the
-          // document's whole path.
+          // The base URL already carries the prefix, so the route does not.
           url:
-            (apiPrefix &&
-            path.startsWith(apiPrefix) &&
-            !((style === "fetch" || style === "angular") && !operation["x-service"])
+            (apiPrefix && path.startsWith(apiPrefix)
               ? path.slice(apiPrefix.length)
               : path) || "/",
           tags: operation.tags?.length ? operation.tags : ["default"],
@@ -523,7 +530,7 @@ export function emit(
               ...item,
               name:
                 options.transform.queryParam?.(item.name, {
-                  service: operation["x-service"] ?? null,
+                  service: serviceOf(operation),
                   operation: name,
                   path,
                 }) ?? item.name,
@@ -540,7 +547,7 @@ export function emit(
           bodyMediaType: sendsBody && requestMedia?.schema ? bodyEntry![0] : null,
           responseSchema: successContent?.schema ?? null,
           responseMediaType: successEntry?.[0] ?? null,
-          service: operation["x-service"] ?? null,
+          service: serviceOf(operation),
         };
 
         const renamed = options.transform.operationName?.(built);
@@ -977,13 +984,19 @@ export function emit(
       );
       lines.push(`import type { ${fromAxios.join(", ")} } from "axios";`);
     } else if (service) {
+      if (operations.some((operation) => !operation.service)) {
+        lines.push(`import { baseUrl } from "${rt.callers.module}";`);
+      }
       lines.push(
         `import { ${["HttpClient", ...(/\bHttpParams\b/.test(body) ? ["HttpParams"] : [])].join(", ")} } from "@angular/common/http";`,
       );
       lines.push(`import { Injectable, inject } from "@angular/core";`);
       if (body.includes("firstValueFrom(")) lines.push(`import { firstValueFrom } from "rxjs";`);
     } else if (style === "fetch") {
-      // `fetch` is the platform's: nothing to import for the call itself.
+      // `fetch` is the platform's: only where the calls start is imported.
+      if (operations.some((operation) => !operation.service)) {
+        lines.push(`import { baseUrl } from "${rt.callers.module}";`);
+      }
     } else {
       const callers = [
         ...new Set(operations.map((item) => rt.callers[item.method])),
@@ -1304,9 +1317,13 @@ export function emit(
     // JSON needs no header for axios and HttpClient, which write it; `fetch` is told below.
     const contentType = contentTypeOf(operation);
     const responseType = responseTypeOf(operation);
+    // axios has its base URL on the instance; `fetch` starts every call from the
+    // `baseUrl` of `client.ts`, or from its own service's.
     const base = operation.service
       ? `API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}]`
-      : null;
+      : style === "fetch"
+        ? "baseUrl"
+        : null;
     const hasBody = Boolean(operation.bodySchema);
     const withBody = ["post", "put", "patch"].includes(operation.method);
     const route = filledRoute(operation, endpoints);
@@ -1537,7 +1554,7 @@ export function emit(
     ];
     const base = operation.service
       ? `API_SERVICE_BASE_URLS[${JSON.stringify(operation.service)}] + `
-      : "";
+      : "baseUrl + ";
     const options = [
       ...(operation.queryParams.length ? ["params"] : []),
       ...(headerEntries.length ? [`headers: { ${headerEntries.join(", ")} }`] : []),
