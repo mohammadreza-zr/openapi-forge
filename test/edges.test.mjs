@@ -108,7 +108,7 @@ describe("the code that is written", () => {
       /listPagesInfinite: \(params: Omit<ListPagesQuery, "start" \| "offset">, headers: ListPagesHeaders\) =>\s*\[\.\.\.edgesKeys\.all, edgesEndpoints\.listPages, "infinite", params, headers\]/,
     );
     assert.match(text, /useListPagesInfiniteQuery\(\s*params: Omit<ListPagesQuery, "start" \| "offset"> = \{\},\s*headers: ListPagesHeaders,/);
-    assert.match(text, /listPages\(\{ \.\.\.params, start: page\.start, offset: page\.size \}, headers, \{ signal \}\)/);
+    assert.match(text, /listPages\(headers, \{ params: \{ \.\.\.params, start: page\.start, offset: page\.size \}, signal \}\)/);
   });
 
   test("a body is sent as the media type the document gives it", () => {
@@ -203,7 +203,10 @@ for (const http of ["fetch", "axios", "api-client"]) {
     test("header parameters are sent, and the call's own headers are kept", async () => {
       if (http === "api-client") {
         // The client's headers are its own: they go in the config of the call.
-        await api.edges.getTenant({}, { headers: { "X-Tenant-Id": "t1", "X-Page": "2", "X-Trace": "z" } });
+        await api.edges.getTenant({ headers: { "X-Tenant-Id": "t1", "X-Page": "2", "X-Trace": "z" } });
+      } else if (http === "axios") {
+        // axios: no query argument — the query is `params` in the config.
+        await api.edges.getTenant({ "X-Tenant-Id": "t1", "X-Page": 2 }, { headers: { "X-Trace": "z" } });
       } else {
         await api.edges.getTenant(
           {},
@@ -215,16 +218,17 @@ for (const http of ["fetch", "axios", "api-client"]) {
       assert.equal(last().headers["x-page"], "2");
       assert.equal(last().headers["x-trace"], "z");
       // An optional header left out is not sent as "undefined".
-      if (http === "api-client") await api.edges.getTenant({}, { headers: { "X-Tenant-Id": "t2" } });
+      if (http === "api-client") await api.edges.getTenant({ headers: { "X-Tenant-Id": "t2" } });
+      else if (http === "axios") await api.edges.getTenant({ "X-Tenant-Id": "t2" });
       else await api.edges.getTenant({}, { "X-Tenant-Id": "t2" });
       assert.equal(last().headers["x-page"], undefined);
     });
 
     test("an object in the query is written name[property]=value", async () => {
-      await api.edges.getTenant(
-        { filter: { a: "x" }, q: "" },
-        ...(http === "api-client" ? [{ headers: { "X-Tenant-Id": "t" } }] : [{ "X-Tenant-Id": "t" }]),
-      );
+      const query = { filter: { a: "x" }, q: "" };
+      if (http === "api-client") await api.edges.getTenant({ params: query, headers: { "X-Tenant-Id": "t" } });
+      else if (http === "axios") await api.edges.getTenant({ "X-Tenant-Id": "t" }, { params: query });
+      else await api.edges.getTenant(query, { "X-Tenant-Id": "t" });
       // Each client writes the query its own way: axios keeps the brackets, URLSearchParams escapes them.
       assert.match(last().url, /^\/api\/v1\/tenant\?filter(%5B|\[)a(%5D|\])=x/);
     });

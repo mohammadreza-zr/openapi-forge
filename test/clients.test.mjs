@@ -90,7 +90,7 @@ test("reactive libraries read each argument where the request is made", () => {
     );
     assert.match(
       pets,
-      /\(signal\) => listVisits\(toValue\(petId\), toValue\(params\), \{ signal \}\)/,
+      /\(signal\) => listVisits\(toValue\(petId\), \{ params: toValue\(params\), signal \}\)/,
     );
     assert.match(
       pets,

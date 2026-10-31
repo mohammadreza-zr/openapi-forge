@@ -111,6 +111,10 @@ export function emit(
   // The query argument is named as the client names it (`params` in all four
   // built-in clients); a custom transport's own key names it.
   const queryArg = builtin ? "params" : rt.requestKeys.query;
+  // api-client and axios take the query in the config of the call (`params`), so
+  // a request function of theirs has no query argument of its own: the config
+  // goes to the client as it is.
+  const queryInConfig = style === "api-client" || style === "axios";
   /** What a call resolves to, as the chosen client gives it. */
   const answerOf = (payload: string) =>
     style === "api-client"
@@ -767,13 +771,30 @@ export function emit(
    * cancel with, or — with Angular, whose `HttpClient` answers an `Observable`
    * and takes no signal — the service's method read once.
    */
-  function callOf(operation: OperationInfo, args: string[]) {
+  function callOf(
+    operation: OperationInfo,
+    given: { path?: string[]; query?: string; headers?: string; body?: string },
+  ) {
+    const { path = [], query, headers, body } = given;
     if (service) {
+      const args = [...path, ...(query ? [query] : []), ...(headers ? [headers] : []), ...(body ? [body] : [])];
       return `firstValueFrom(service.${operation.name}(${args.join(", ")}))`;
     }
     const signal = rt.requestKeys.signal;
-    const signalArg = signal === "signal" ? "{ signal }" : `{ ${signal}: signal }`;
-    return `${operation.name}(${[...args, signalArg].join(", ")})`;
+    const signalEntry = signal === "signal" ? "signal" : `${signal}: signal`;
+    // The client's own config carries the query: it is handed over in `params`.
+    if (queryInConfig) {
+      const params = query
+        ? [query === queryArg ? "params" : `params: ${query}`]
+        : [];
+      const clash = style === "api-client" && operation.queryParams.some((item) => item.name === "ordering");
+      const entry = clash && query ? `params: ${query} as never` : params[0];
+      const config = `{ ${[...(entry ? [entry] : []), signalEntry].join(", ")} }`;
+      const args = [...path, ...(headers ? [headers] : []), ...(body ? [body] : []), config];
+      return `${operation.name}(${args.join(", ")})`;
+    }
+    const args = [...path, ...(query ? [query] : []), ...(headers ? [headers] : []), ...(body ? [body] : []), `{ ${signalEntry} }`];
+    return `${operation.name}(${args.join(", ")})`;
   }
 
   /** The line that gets a tag's service in a hook, which runs in an injection context. */
@@ -846,7 +867,7 @@ export function emit(
       `  return ${rt.hooks.infinite}(`,
       `    ${lazy(`${keys}.${infiniteKey(operation)}(${argRead(queryArg)}${headers ? `, ${argRead("headers")}` : ""})`)},`,
       `    (page${service ? "" : ", signal"}) =>`,
-      `      ${callOf(operation, [`{ ...${argRead(queryArg)}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }`, ...(headers ? [argRead("headers")] : [])])}${pageOf(`${list && list.name}<${item}>`)},`,
+      `      ${callOf(operation, { query: `{ ...${argRead(queryArg)}, ${propertyName(start)}: page.start, ${propertyName(size)}: page.size }`, headers: headers ? argRead("headers") : undefined })}${pageOf(`${list && list.name}<${item}>`)},`,
       `    options,`,
       `  );`,
       `}`,
@@ -1160,11 +1181,7 @@ export function emit(
       (item) =>
         `${pathArg(operation, item)}: ${paramType(item)}`,
     );
-    if (operation.queryParams.length) {
-      args.push(
-        `${queryArg}: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
-      );
-    }
+    // The query is `params` in the config, which is the client's own.
     if (operation.bodySchema) {
       args.push(
         `body${operation.bodyRequired ? "" : "?"}: ${bodyTypeName(operation)}`,
@@ -1173,11 +1190,6 @@ export function emit(
     args.push(`config?: RequestConfig<${payload}>`);
 
     const configLines = ["...config"];
-    if (operation.queryParams.length) {
-      // Its `ordering` is a typed sort order; a plain parameter of that name is not.
-      const clash = operation.queryParams.some((item) => item.name === "ordering");
-      configLines.push(clash ? "params: params as never" : "params");
-    }
     if (operation.pathParams.length) {
       const plain = /^(string|number|"[^"]*"( \| "[^"]*")*|-?\d+( \| -?\d+)*)$/;
       const entries = operation.pathParams.map((item, index) => {
@@ -1210,8 +1222,11 @@ export function emit(
     if (["post", "put", "patch"].includes(operation.method)) {
       callArgs.push(operation.bodySchema ? "body" : "undefined");
     }
+    // Nothing of the document's to add: the caller's config goes to the client as it is.
     callArgs.push(
-      `{\n${configLines.map((line) => `    ${line}`).join(",\n")},\n  }`,
+      configLines.length === 1
+        ? "config"
+        : `{\n${configLines.map((line) => `    ${line}`).join(",\n")},\n  }`,
     );
     return [
       requestDoc(operation),
@@ -1268,7 +1283,7 @@ export function emit(
       (item) =>
         `${pathArg(operation, item)}: ${paramType(item)}`,
     );
-    if (operation.queryParams.length) {
+    if (operation.queryParams.length && !queryInConfig) {
       args.push(
         `${queryArg}: ${queryTypeName(operation)}${queryIsOptional(operation) ? " = {}" : ""}`,
       );
@@ -1372,7 +1387,6 @@ export function emit(
     {
       const config = [
         "...config",
-        ...(operation.queryParams.length ? ["params"] : []),
         ...(headerLines.length ? [`headers: { ...config?.headers, ${headerLines.join(", ")} }`] : []),
         ...(responseType ? [`responseType: ${JSON.stringify(responseType)}`] : []),
         ...(operation.method === "delete" && hasBody ? ["data: body"] : []),
@@ -1593,10 +1607,11 @@ export function emit(
       ...pathArgNames(operation).map((item) => argRead(item)),
       ...inputs,
     ].join(", ");
-    const callArgs = [
-      ...pathArgNames(operation).map((item) => argRead(item)),
-      ...inputs,
-    ];
+    const callArgs = {
+      path: pathArgNames(operation).map((item) => argRead(item)),
+      query: operation.queryParams.length ? argRead(queryArg) : undefined,
+      headers: operation.headerParams.length ? argRead("headers") : undefined,
+    };
 
     return [
       requestDoc(operation),
@@ -1633,27 +1648,29 @@ export function emit(
 
     if (!hasVariables) {
       lines.push(
-        `    (_variables${signalSlot}) => ${callOf(operation, [])},`,
+        `    (_variables${signalSlot}) => ${callOf(operation, {})},`,
       );
     } else {
       const slots = [...pathArgNames(operation)];
-      const callArgs = [...pathArgNames(operation)];
+      const given: { path: string[]; query?: string; headers?: string; body?: string } = {
+        path: [...pathArgNames(operation)],
+      };
       if (operation.queryParams.length) {
         slots.push(queryArg);
         // A required query has no `{}` to fall back to.
-        callArgs.push(queryIsOptional(operation) ? `${queryArg} ?? {}` : queryArg);
+        given.query = queryIsOptional(operation) ? `${queryArg} ?? {}` : queryArg;
       }
       if (operation.headerParams.length) {
         slots.push("headers");
-        callArgs.push(headersAreOptional(operation) ? "headers ?? {}" : "headers");
+        given.headers = headersAreOptional(operation) ? "headers ?? {}" : "headers";
       }
       if (operation.bodySchema) {
         slots.push("body");
-        callArgs.push("body");
+        given.body = "body";
       }
       lines.push(
         `    ({ ${slots.join(", ")} }${signalSlot}) =>`,
-        `      ${callOf(operation, callArgs)},`,
+        `      ${callOf(operation, given)},`,
       );
     }
 

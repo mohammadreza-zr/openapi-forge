@@ -54,7 +54,10 @@ for (const http of ["fetch", "axios", "api-client"]) {
     const last = () => backend.seen.at(-1);
 
     test("a query repeats array keys and leaves out what is empty", async () => {
-      const page = payloadOf(http, await api.pets.listPets({
+      // api-client and axios take the query as `params` in the config of the call.
+      const listPets = (query) =>
+        http === "fetch" ? api.pets.listPets(query) : api.pets.listPets({ params: query });
+      const page = payloadOf(http, await listPets({
         kind: "cat",
         ids: ["a", "b"],
         start: 0,
@@ -67,7 +70,7 @@ for (const http of ["fetch", "axios", "api-client"]) {
       // axios writes a list its own way (`ids[]=a`) unless its paramsSerializer says otherwise.
       const key = http === "axios" ? "ids[]" : "ids";
       assert.deepEqual([...new URLSearchParams(search)].sort(), [[key, "a"], [key, "b"], ["kind", "cat"], ["start", "0"]]);
-      await api.pets.listPets({ kind: undefined, offset: undefined });
+      await listPets({ kind: undefined, offset: undefined });
       assert.equal(last().url, "/api/v1/pets");
     });
 

@@ -129,7 +129,8 @@ export const petsKeys = {
 export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string[] };
 
 /** List the pets — `GET /pets` */
-export function listPets(params: ListPetsQuery = {}, config?: RequestConfig<ApiListData<Pet>>) { … }   // the client's own config type
+export function listPets(config?: RequestConfig<ApiListData<Pet>>) { … }   // api-client: the query is `params` in its own config
+listPets({ params: { kind: "cat" } });
 
 export function useListPetsQuery(params: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
 export function useGetPetQuery(petId: string, options?: ApiQueryOptions<…>) { … }
@@ -137,7 +138,7 @@ export function useCreatePetMutation(options?: ApiMutationOptions<Pet, CreatePet
 ```
 
 - A write takes **one variables object** (`{ petId, params, headers, body }` — only the parts it has), named `<Operation>Variables`.
-- Query and header parameters get `<Operation>Query` / `<Operation>Headers` types. The query argument is called `params`, as every built-in client calls it (`runtime.requestKeys.query` names it for a custom transport); path arguments keep the document's names.
+- Query and header parameters get `<Operation>Query` / `<Operation>Headers` types. The query is called `params`, as every built-in client calls it (`runtime.requestKeys.query` names it for a custom transport). With `@mrzr/api-client` and axios a request function has no query argument: the query is `params` in the config of the call, which goes to the client as it is (`listPets({ params: { kind: "cat" } })`); hooks keep it typed (`useListPetsQuery({ kind: "cat" })`). `fetch` and Angular's service take it as their first argument after the path. Path arguments keep the document's names.
 - An operation with no tag goes to the `default` module.
 
 ## Hook libraries
