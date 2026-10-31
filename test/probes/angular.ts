@@ -55,8 +55,10 @@ async function main() {
     ],
   });
   const id = signal("1");
-  const { query, mutation } = TestBed.runInInjectionContext(() => ({
+  const later = signal<string | undefined>(undefined);
+  const { query, waiting, mutation } = TestBed.runInInjectionContext(() => ({
     query: pets.injectGetPetQuery(id),
+    waiting: pets.injectGetPetQuery(later),
     mutation: pets.injectCreatePetMutation(),
   }));
 
@@ -68,6 +70,16 @@ async function main() {
     seen.includes("GET /api/v1/pets/1") && seen.includes("GET /api/v1/pets/2"),
     seen.join(", "),
   );
+
+  // A missing id waits instead of asking for /pets/undefined.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(
+    !(await asked()).some((line) => line.includes("undefined")),
+    "asked for /pets/undefined",
+  );
+  assert.equal(waiting.fetchStatus(), "idle");
+  later.set("8");
+  await until(() => payloadOf(http, waiting.data())?.id === "8", "pet 8");
 
   const created = await mutation.mutateAsync({ body: { name: "Rex" } });
   assert.deepEqual(payloadOf(http, created), { id: "new", name: "Rex" });

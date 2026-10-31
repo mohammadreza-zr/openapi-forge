@@ -51,10 +51,15 @@ test("read operations get keys and query hooks, writes get mutation hooks", () =
   assert.match(pets, /@deprecated/);
 });
 
-test("a detail query takes its id as it is: no undefined, no guard", () => {
+test("a detail query waits for its id instead of asking for /pets/undefined", () => {
   const pets = run().files.get("pets.ts");
-  assert.match(pets, /useGetPetQuery\(\s*petId: string,/);
-  assert.doesNotMatch(pets, /petId!|petId \?\? |enabled: petId/);
+  assert.match(pets, /useGetPetQuery\(\s*petId: string \| undefined,/);
+  assert.match(pets, /petsKeys\.getPet\(petId \?\? ""\)/);
+  assert.match(pets, /\{ enabled: petId !== undefined, \.\.\.options \}/);
+  // The caller's options come last, so a page can still force `enabled`.
+  assert.match(pets, /pet_id: petId! \}, signal \}/);
+  // A write takes its ids when it is called: no guard there.
+  assert.doesNotMatch(pets.slice(pets.indexOf("export function useDeletePetMutation")), /enabled/);
 });
 
 test("target requests emits functions only", () => {
@@ -372,12 +377,15 @@ test("a bare { id, name } is a coincidence, not one model", () => {
   assert.match(models, /export type TwoResponse = \{/);
 });
 
-test("a key is the tag, the route from the Endpoints map and what its answer depends on", () => {
+test("a key is the half of the tag, the route from the Endpoints map and what its answer depends on", () => {
   const pets = run().files.get("pets.ts");
   assert.match(pets, /all: \["Pets"\] as const,/);
-  assert.match(pets, /listPets: \(params: ListPetsQuery\) =>\s*\[\.\.\.petsKeys\.all, petsEndpoints\.listPets, params\] as const,/);
-  assert.match(pets, /getPet: \(petId: string\) =>\s*\[\.\.\.petsKeys\.all, petsEndpoints\.getPet, petId\] as const,/);
-  // The route is read from the map, never spelled in a key; no list / detail layer.
+  assert.match(pets, /listPets: \(params: ListPetsQuery\) =>\s*\[\.\.\.petsKeys\.lists\(\), petsEndpoints\.listPets, params\] as const,/);
+  assert.match(pets, /getPet: \(petId: string\) =>\s*\[\.\.\.petsKeys\.details\(\), petsEndpoints\.getPet, petId\] as const,/);
+  // `lists()` and `details()` are the two halves of the tag, for invalidating either at once.
+  assert.match(pets, /lists: \(\) => \[\.\.\.petsKeys\.all, "list"\] as const,/);
+  assert.match(pets, /details: \(\) => \[\.\.\.petsKeys\.all, "detail"\] as const,/);
+  // The route is read from the map, never spelled in a key.
   const keys = pets.slice(pets.indexOf("export const petsKeys"), pets.indexOf("} as const;", pets.indexOf("export const petsKeys")));
-  assert.doesNotMatch(keys, /\/pets|lists\(\)|details\(\)/);
+  assert.doesNotMatch(keys, /"\/pets/);
 });

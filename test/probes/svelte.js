@@ -43,6 +43,16 @@ async function main() {
     seen.join(", "),
   );
 
+  // A missing id waits instead of asking for /pets/undefined.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(
+    !(await asked()).some((line) => line.includes("undefined")),
+    "asked for /pets/undefined",
+  );
+  assert.equal(handle.waiting.fetchStatus, "idle");
+  handle.setLater("8");
+  await until(() => payloadOf(http, handle.waiting.data)?.id === "8", "pet 8");
+
   const created = await handle.mutation.mutateAsync({ body: { name: "Rex" } });
   assert.deepEqual(payloadOf(http, created), { id: "new", name: "Rex" });
 

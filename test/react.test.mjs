@@ -139,6 +139,23 @@ describe("the React hooks", () => {
         await view.unmount();
       });
 
+      test("a missing id waits instead of asking for /pets/undefined", async () => {
+        let latest;
+        const Probe = ({ id }) => {
+          latest = { ...api.useGetPetQuery(id) };
+          return null;
+        };
+        const view = mount(wrap, Probe);
+        const before = server.seen.length;
+        await view.render({ id: undefined });
+        await act(async () => sleep(100));
+        assert.equal(server.seen.length, before);
+        assert.equal(latest.data, undefined);
+        await view.render({ id: "5" });
+        await eventually(() => payloadOf(http, latest.data)?.id === "5", "pet 5");
+        await view.unmount();
+      });
+
       test("a path id and a query are both sent", async () => {
         const Probe = () => {
           api.useListVisitsQuery("9", { since: "monday" });

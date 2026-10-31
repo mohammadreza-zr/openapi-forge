@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+Two things 0.3.0 dropped, put back: they are what an app that invalidates by group and passes a route param straight in relies on.
+
+- **`lists()` and `details()` are back** in every `<tag>Keys`: `lists: () => [...petsKeys.all, "list"]` and `details: () => [...petsKeys.all, "detail"]`. A read with a path id is a detail, any other a list; its key is the half, the operation's route and the arguments — `[...petsKeys.details(), petsEndpoints.getPet, petId]`, an infinite list `[...petsKeys.lists(), petsEndpoints.listPets, "infinite", params]` — so one call invalidates every list or every detail of a tag.
+- **A query hook waits for its path ids.** `useGetPetQuery(petId: string | undefined)` is not enabled until the id is there (`{ enabled: petId !== undefined, ...options }`; in the reactive libraries the same as a getter), and no request goes to `/pets/undefined`. The options you pass come last, so `enabled` can still be forced. The key reads a missing id as `""`, `0` or `false`. Mutations are unchanged: their ids are variables.
+
 ## 0.3.0
 
 **Breaking — every built-in client is called as itself.** The package generates code; it no longer decides how a client behaves. Each generated function calls the client you chose, with that client's own config, and returns what that client returns. The four clients no longer share a runtime: they are four different worlds, and the generated code differs between them.

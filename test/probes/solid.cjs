@@ -36,7 +36,8 @@ async function main() {
     defaultOptions: { queries: { gcTime: 0 }, mutations: { gcTime: 0 } },
   });
   const [id, setId] = createSignal("1");
-  let query, mutation;
+  const [later, setLater] = createSignal(undefined);
+  let query, waiting, mutation;
   const dispose = createRoot((dispose) => {
     QueryClientProvider({
       client,
@@ -44,6 +45,7 @@ async function main() {
         // A component body is not a tracking scope; `untrack` stands in for one.
         untrack(() => {
           query = pets.createGetPetQuery(id);
+          waiting = pets.createGetPetQuery(later);
           mutation = pets.createCreatePetMutation();
         });
       },
@@ -59,6 +61,16 @@ async function main() {
     seen.includes("GET /api/v1/pets/1") && seen.includes("GET /api/v1/pets/2"),
     seen.join(", "),
   );
+
+  // A missing id waits instead of asking for /pets/undefined.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(
+    !(await asked()).some((line) => line.includes("undefined")),
+    "asked for /pets/undefined",
+  );
+  assert.equal(waiting.fetchStatus, "idle");
+  setLater("8");
+  await until(() => payloadOf(http, waiting.data)?.id === "8", "pet 8");
 
   const created = await mutation.mutateAsync({ body: { name: "Rex" } });
   assert.deepEqual(payloadOf(http, created), { id: "new", name: "Rex" });

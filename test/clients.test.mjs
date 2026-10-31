@@ -63,7 +63,7 @@ test("a runtime name set in the config wins over the library's", () => {
 test("react and swr hooks take plain arguments", () => {
   for (const library of ["react-query", "swr"]) {
     const pets = build({ library }).get("pets.ts");
-    assert.match(pets, /useGetPetQuery\(petId: string, options\?/);
+    assert.match(pets, /useGetPetQuery\(petId: string \| undefined, options\?/);
     assert.doesNotMatch(pets, /toValue|MaybeGetter/);
   }
 });
@@ -80,17 +80,21 @@ test("reactive libraries read each argument where the request is made", () => {
     assert.match(
       pets,
       new RegExp(
-        `${prefix}ListVisitsQuery\\(\\s*petId: MaybeGetter<string>,\\s*params: MaybeGetter<ListVisitsQuery>,`,
+        `${prefix}ListVisitsQuery\\(\\s*petId: MaybeGetter<string \\| undefined>,\\s*params: MaybeGetter<ListVisitsQuery>,`,
       ),
       library,
     );
     assert.match(
       pets,
-      /\(\) => petsKeys\.listVisits\(toValue\(petId\), toValue\(params\)\)/,
+      /\(\) => petsKeys\.listVisits\(toValue\(petId\) \?\? "", toValue\(params\)\)/,
     );
     assert.match(
       pets,
-      /\(signal\) => listVisits\(\{ addTemplateToUrl: \{ pet_id: toValue\(petId\) \}, params: toValue\(params\), signal \}\)/,
+      /\(signal\) => listVisits\(\{ addTemplateToUrl: \{ pet_id: toValue\(petId\)! \}, params: toValue\(params\), signal \}\)/,
+    );
+    assert.match(
+      pets,
+      /\(\) => \[toValue\(petId\)\]\.every\(\(value\) => value !== undefined && !Number\.isNaN\(value\)\)/,
     );
     assert.match(
       pets,
@@ -249,12 +253,12 @@ test("axios, fetch and Angular are called straight, each in its own way", () => 
   assert.match(angular, /@Injectable\(\{ providedIn: "root" \}\)\s*export class PetsService \{\s*private readonly http = inject\(HttpClient\);/);
   assert.match(angular, /getPet\(petId: string\) \{\s*return this\.http\.get<PetEnvelope>\(baseUrl \+ petsEndpoints\.getPet\.replace/);
   assert.match(angular, /const service = inject\(PetsService\);/);
-  assert.match(angular, /firstValueFrom\(service\.getPet\(toValue\(petId\)\)\)/);
+  assert.match(angular, /firstValueFrom\(service\.getPet\(toValue\(petId\)!\)\)/);
   // @mrzr/api-client is called straight too, with its own config and answer.
   const apiClient = build({}).get("pets.ts");
   // Everything the config carries (the path values, the query, the headers) is the caller's: it goes to the client as it is.
   assert.match(apiClient, /export function getPet\(config\?: RequestConfig<Pet>\) \{\s*return apiClient\.get<Pet>\(\s*petsEndpoints\.getPet,\s*config,/);
-  assert.match(apiClient, /\(signal\) => getPet\(\{ addTemplateToUrl: \{ pet_id: petId \}, signal \}\)/);
+  assert.match(apiClient, /\(signal\) => getPet\(\{ addTemplateToUrl: \{ pet_id: petId! \}, signal \}\)/);
   assert.match(apiClient, /config\?: RequestConfig<Pet>/);
   assert.match(apiClient, /import type \{[^}]*\bRequestConfig\b[^}]*\} from "@mrzr\/api-client"/);
 });

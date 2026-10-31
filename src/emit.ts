@@ -859,7 +859,7 @@ export function emit(
     const { omit, headers } = infiniteOf(operation)!;
     return [
       `  ${infiniteKey(operation)}: (params: ${omit}${headers ? `, headers: ${headers}` : ""}) =>`,
-      `    [...${keys}.all, ${endpointRef(endpoints, operation)}, "infinite", params${headers ? ", headers" : ""}] as const,`,
+      `    [...${keys}.lists(), ${endpointRef(endpoints, operation)}, "infinite", params${headers ? ", headers" : ""}] as const,`,
     ].join("\n");
   }
 
@@ -1074,10 +1074,11 @@ export function emit(
   }
 
   /**
-   * `all` is the tag, so one call invalidates all of it; a key per read is the
-   * tag, the operation's route — read from the tag's `Endpoints` map, so it is
-   * written once — and the arguments its answer depends on. The route tells two
-   * reads of one tag apart (a detail by id and by code).
+   * `all` is the tag, so one call invalidates all of it; `lists()` and `details()`
+   * are its two halves (a read with a path id is a detail, any other a list). A key
+   * per read is the half, the operation's route — read from the tag's `Endpoints`
+   * map, so it is written once — and the arguments its answer depends on. The route
+   * tells two reads of one tag apart (a detail by id and by code).
    */
   function keyFactoryBlock(tag: string, operations: OperationInfo[], keys: string, endpoints: string) {
     const reads = operations.filter((operation) => operation.method === "get");
@@ -1085,6 +1086,9 @@ export function emit(
       `/** Query keys for "${tag}". */`,
       `export const ${keys} = {`,
       `  all: [${JSON.stringify(tag)}] as const,`,
+      // Every list, or every detail, of the tag: one call invalidates either group.
+      `  lists: () => [...${keys}.all, "list"] as const,`,
+      `  details: () => [...${keys}.all, "detail"] as const,`,
       ...reads.map((operation) => {
         const isDetail = operation.pathParams.length > 0;
         // What the answer depends on beside the route: a detail read that also
@@ -1115,7 +1119,7 @@ export function emit(
         ].join(", ");
         return [
           `  ${propertyName(operation.name)}: (${args}) =>`,
-          `    [...${keys}.all, ${endpointRef(endpoints, operation)}${tail ? `, ${tail}` : ""}] as const,`,
+          `    [...${keys}.${isDetail ? "details()" : "lists()"}, ${endpointRef(endpoints, operation)}${tail ? `, ${tail}` : ""}] as const,`,
         ].join("\n");
       }),
       ...reads
@@ -1593,11 +1597,21 @@ export function emit(
     return `/**\n${lines.map((line) => ` * ${line}`).join("\n")}\n */`;
   }
 
+  /** What a missing path argument is keyed as while its query is disabled. */
+  function keyFallback(type: string) {
+    if (type === "string") return '""';
+    if (type === "number") return "0";
+    if (type === "boolean") return "false";
+    return "undefined as never";
+  }
+
   function queryHookBlock(operation: OperationInfo, keys: string) {
     const payload = payloadFor(operation);
+    // A path id may not be there yet (a route param, a selection): the hook takes
+    // `undefined` and waits, instead of asking for `/pets/undefined`.
     const params = operation.pathParams.map(
       (item) =>
-        `${pathArg(operation, item)}: ${argType(paramType(item))}`,
+        `${pathArg(operation, item)}: ${argType(`${paramType(item)} | undefined`)}`,
     );
     if (operation.queryParams.length) {
       params.push(
@@ -1620,14 +1634,34 @@ export function emit(
       ...(operation.headerParams.length ? [argRead("headers")] : []),
     ];
     const keyArgs = [
-      ...pathArgNames(operation).map((item) => argRead(item)),
+      ...pathArgNames(operation).map(
+        (item, index) =>
+          `${argRead(item)} ?? ${keyFallback(paramType(operation.pathParams[index]))}`,
+      ),
       ...inputs,
     ].join(", ");
     const callArgs = {
-      path: pathArgNames(operation).map((item) => argRead(item)),
+      path: pathArgNames(operation).map((item) => `${argRead(item)}!`),
       query: operation.queryParams.length ? argRead(queryArg) : undefined,
       headers: operation.headerParams.length ? argRead("headers") : undefined,
     };
+
+    // The query waits for its path ids. The caller's `options` win, so it can still
+    // force `enabled`.
+    const waiting = pathArgNames(operation);
+    const guard = !waiting.length
+      ? ""
+      : reactive
+        ? lazy(
+            `[${waiting.map(argRead).join(", ")}].every((value) => value !== undefined && !Number.isNaN(value))`,
+          )
+        : waiting
+            .map((item, index) =>
+              paramType(operation.pathParams[index]) === "number"
+                ? `${item} !== undefined && !Number.isNaN(${item})`
+                : `${item} !== undefined`,
+            )
+            .join(" && ");
 
     return [
       requestDoc(operation),
@@ -1636,7 +1670,11 @@ export function emit(
       `  return ${rt.hooks.query}(`,
       `    ${lazy(`${keys}.${operation.name}(${keyArgs})`)},`,
       `    (${service ? "" : "signal"}) => ${callOf(operation, callArgs)},`,
-      `    options,`,
+      ...(reactive
+        ? [`    options,`, ...(guard ? [`    ${guard},`] : [])]
+        : guard
+          ? [`    { enabled: ${guard}, ...options },`]
+          : [`    options,`]),
       `  );`,
       `}`,
     ].join("\n");

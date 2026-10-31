@@ -56,6 +56,17 @@ for (const http of ["axios", "api-client"]) describe(`the vue-query hooks over $
     assert.ok(server.asked().includes("GET /api/v1/pets/2"));
   });
 
+  test("a missing id waits instead of asking for /pets/undefined", async () => {
+    const id = vue.ref(undefined);
+    const before = server.seen.length;
+    const query = inApp(() => pets.useGetPetQuery(id));
+    await sleep(100);
+    assert.equal(server.seen.length, before);
+    assert.equal(query.fetchStatus.value, "idle");
+    id.value = "5";
+    await until(() => payloadOf(http, query.data.value)?.id === "5", "pet 5");
+  });
+
   test("a getter works the same way", async () => {
     const id = vue.ref("3");
     const query = inApp(() => pets.useGetPetQuery(() => id.value));

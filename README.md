@@ -38,7 +38,7 @@ The output is plain, readable TypeScript that is formatted with your own Prettie
 - **Models** — one `type` per schema: inline objects get names, `allOf` / `oneOf` / `anyOf`, `nullable`, enums, tuples (`prefixItems`), records (`additionalProperties`), `Blob` for uploads, circular references.
 - **Routes** — `<tag>Endpoints`, the one place each URL is written; the request functions read their route from it, so a path changes in a single line.
 - **Request functions** — one per operation, with typed path, query, header and body arguments, a `config` argument for `signal`, `baseUrl` and the like, and a JSDoc block (summary, description, `METHOD /route`, `@deprecated`).
-- **Query-key factories** — `<tag>Keys` with `all` and one key per read: the tag, the operation's route (read from `<tag>Endpoints`) and the arguments its answer depends on (`["Pets", "/pets/{pet_id}", "7"]`), so invalidating "everything of this tag" is one line and a path still changes in one place.
+- **Query-key factories** — `<tag>Keys` with `all`, its two halves `lists()` and `details()` (a read with a path id is a detail, any other a list) and one key per read: the half, the operation's route (read from `<tag>Endpoints`) and the arguments its answer depends on (`["Pets", "detail", "/pets/{pet_id}", "7"]`), so invalidating a tag, all its lists or all its details is one line and a path still changes in one place.
 - **Hooks** for **React Query, Vue Query, Svelte Query, Solid Query, Angular Query or SWR**: a query hook per read, a mutation hook per write (or only plain request functions with `target: "requests"`).
 - **Reactive arguments** — in Vue, Svelte, Solid and Angular a hook argument may be a ref, a getter or a signal, and the query follows it.
 - **Zod validators** (`zod: true`) — `schemas.ts`, one validator per model, typed `z.ZodType<Model>` so the two cannot drift apart.
@@ -122,8 +122,10 @@ export const petsEndpoints = {
 
 export const petsKeys = {
   all: ["Pets"] as const,
-  listPets: (params: ListPetsQuery) => [...petsKeys.all, petsEndpoints.listPets, params] as const,
-  getPet: (petId: string) => [...petsKeys.all, petsEndpoints.getPet, petId] as const,
+  lists: () => [...petsKeys.all, "list"] as const,
+  details: () => [...petsKeys.all, "detail"] as const,
+  listPets: (params: ListPetsQuery) => [...petsKeys.lists(), petsEndpoints.listPets, params] as const,
+  getPet: (petId: string) => [...petsKeys.details(), petsEndpoints.getPet, petId] as const,
 } as const;
 
 export type ListPetsQuery = { start?: number; kind?: "cat" | "dog"; ids?: string[] };
@@ -134,7 +136,7 @@ listPets({ params: { kind: "cat" } });
 getPet({ addTemplateToUrl: { pet_id: "7" } });   // the path values are in the config too
 
 export function useListPetsQuery(params: ListPetsQuery = {}, options?: ApiQueryOptions<…>) { … }
-export function useGetPetQuery(petId: string, options?: ApiQueryOptions<…>) { … }
+export function useGetPetQuery(petId: string | undefined, options?: ApiQueryOptions<…>) { … }
 export function useCreatePetMutation(options?: ApiMutationOptions<Pet, CreatePetVariables>) { … }
 ```
 
@@ -171,7 +173,7 @@ const pet = useGetPetQuery(id);            // Vue: refetches when `id.value` cha
 const pet = createGetPetQuery(() => id()); // Solid / Svelte / Angular: a getter
 ```
 
-A query takes its path id as it is, a plain `string`. To hold a query back until you have the id, set `enabled` in the hook options. Mutations take their variables when `mutate` is called, so they are the same in every library.
+A query hook takes its path ids as `string | undefined` and waits for them: it is not enabled until every id is there, so a page can pass a route param or a selection straight in and no request goes to `/pets/undefined`. The options you pass come last, so `enabled` can still be forced. Mutations take their variables when `mutate` is called, so they are the same in every library.
 
 Notes that follow from what each library offers:
 

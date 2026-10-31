@@ -105,7 +105,7 @@ describe("the code that is written", () => {
     const text = edgesTs({ infinite: true });
     assert.match(
       text,
-      /listPagesInfinite: \(params: Omit<ListPagesQuery, "start" \| "offset">, headers: ListPagesHeaders\) =>\s*\[\.\.\.edgesKeys\.all, edgesEndpoints\.listPages, "infinite", params, headers\]/,
+      /listPagesInfinite: \(params: Omit<ListPagesQuery, "start" \| "offset">, headers: ListPagesHeaders\) =>\s*\[\.\.\.edgesKeys\.lists\(\), edgesEndpoints\.listPages, "infinite", params, headers\]/,
     );
     assert.match(text, /useListPagesInfiniteQuery\(\s*params: Omit<ListPagesQuery, "start" \| "offset"> = \{\},\s*headers: ListPagesHeaders,/);
     assert.match(text, /listPages\(headers, \{ params: \{ \.\.\.params, start: page\.start, offset: page\.size \}, signal \}\)/);
