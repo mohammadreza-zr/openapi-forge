@@ -329,7 +329,7 @@ Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-
 `--no-pull`, `--verbose`, `--watch`, `--interval <s>`, `--format text|markdown|json`, `--fail-on breaking|risky|safe`,
 `-h`, `-v`.
 
-Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`, `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`).
+Environment: `OPENAPI_FORGE_INPUT`, `OPENAPI_FORGE_HEADERS`, `OPENAPI_FORGE_INSECURE`, `OPENAPI_FORGE_CA`, `OPENAPI_FORGE_SOURCES` (`name=url;name2=url2`). The CLI also reads `.env.local` and `.env` from the current folder first (a variable already set in the shell wins, then `.env.local`, then `.env`), so these can live next to the project's other variables.
 The command line wins over the config file, which wins over the defaults.
 
 - `--watch` rebuilds when a local input document changes; a URL input is polled (`--interval 30`).

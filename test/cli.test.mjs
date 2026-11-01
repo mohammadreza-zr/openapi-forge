@@ -111,3 +111,18 @@ test("the module of a tag the document dropped is removed, and --check names it"
   assert.equal(await readFile(join(dir, "api", "mine.ts"), "utf8"), "// written by a person\n");
   assert.equal(await stat(join(dir, "api", "client.ts")).then(() => true, () => false), true);
 });
+
+test(".env.local and .env are read; the shell wins over both, .env.local over .env", async () => {
+  const dir = await project();
+  await writeFile(join(dir, ".env"), "OPENAPI_FORGE_INPUT=missing.yaml\nOPENAPI_FORGE_INSECURE=\n");
+  await writeFile(join(dir, ".env.local"), "OPENAPI_FORGE_INPUT=openapi.yaml\n");
+  const own = forge(dir, "--out", "api", "--raw");
+  assert.equal(own.status, 0, own.stderr);
+  assert.ok(await readFile(join(dir, "api", "pets.ts"), "utf8"));
+  const shell = spawnSync(process.execPath, [BIN, "--out", "api2", "--raw"], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...process.env, OPENAPI_FORGE_INPUT: "nope.yaml" },
+  });
+  assert.equal(shell.status, 1, "the shell's value is used, not the file's");
+});

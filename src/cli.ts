@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { loadConfigFile, resolveOptions } from "./config.js";
 import { generate } from "./generate.js";
 import { doctor, renderChecks } from "./doctor.js";
+import { loadEnvFiles } from "./env.js";
 import { watchRun } from "./watch.js";
 import type { ForgeConfig } from "./types.js";
 import {
@@ -58,7 +59,7 @@ Options
   -h, --help             this text
   -v, --version          the version
 
-Environment
+Environment (also read from .env.local and .env in the current folder; the shell wins)
   OPENAPI_FORGE_INPUT, OPENAPI_FORGE_HEADERS, OPENAPI_FORGE_INSECURE,
   OPENAPI_FORGE_CA, OPENAPI_FORGE_SOURCES (name=url;name2=url2)
 `;
@@ -190,6 +191,7 @@ async function main() {
   }
 
   const cwd = process.cwd();
+  loadEnvFiles(cwd);
 
   if (command === "diff") {
     const [before, after] = positionals;

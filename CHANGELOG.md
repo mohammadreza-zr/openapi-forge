@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.4
+
+- **The CLI reads `.env.local` and `.env`.** At the start of a run the current folder's `.env.local` and `.env` are loaded into the environment (Node's `process.loadEnvFile`, so a variable already set in the shell wins, then `.env.local`, then `.env`; a missing file is skipped). `OPENAPI_FORGE_INPUT`, `_HEADERS`, `_CA`, `_INSECURE` and `_SOURCES` — and anything a config file reads from `process.env` — no longer need `dotenv` or an `export` before the command: `"pull:api": "npx @mrzr/openapi-forge pull --ca certs/internal-root-ca.crt"`.
 ## 0.3.3
 
 - **`@mrzr/api-client`: a multipart body may be a plain object.** The body is typed `UploadPhotoBody | FormData` and the call passes api-client's own `isFormData: true`, which turns a plain object into the form (a file or list per entry, an object as a JSON field) and sends a `FormData` as it is, so `uploadPhoto({ file }, { addTemplateToUrl: { pet_id } })` works without building the `FormData`. The document says the body is multipart; the client does the rest. fetch, axios and Angular still take a `FormData`.
