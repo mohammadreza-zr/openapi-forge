@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1
 
 - The README writes `npx @mrzr/openapi-forge`, not `npx openapi-forge`: without a local install, the bare name runs a different package of that name from npm.
 
