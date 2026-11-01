@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- **The config can be data: YAML, JSON or an rc file.** `openapi-forge.config.yaml`, `.yml` and `.json`, and `.openapi-forgerc` with the same `.yaml`, `.yml` and `.json` variants, are searched first, in that order. A file ending in `.json` is read as JSON and any other as YAML, so the rc file with no extension may hold either. YAML allows comments, which JSON does not. `openapi-forge init` now writes `openapi-forge.config.yaml`.
+- **Scripts still work, and are read last.** `openapi-forge.config.mjs`, `.js` and `.cjs` are the only place `transform` can go, because it takes functions. Nothing else needs a script. A project that has one keeps working unchanged; to move it, copy the options into YAML and leave `transform` out.
+- **`transform` in a YAML or JSON file is an error** that says it takes functions and names the script to put it in.
+- **An option the tool does not know is an error.** `libary: swr` used to be ignored and now stops with the file's name and the list of valid options. This applies to every config file, scripts included.
+- **A config that is not valid YAML or JSON, or not a mapping, names the file** in the error.
+- The README shows its config as YAML, and a test reads every YAML block of it with the tool.
+
+
 ## 0.3.4
 
 - **The CLI reads `.env.local` and `.env`.** At the start of a run the current folder's `.env.local` and `.env` are loaded into the environment (Node's `process.loadEnvFile`, so a variable already set in the shell wins, then `.env.local`, then `.env`; a missing file is skipped). `OPENAPI_FORGE_INPUT`, `_HEADERS`, `_CA`, `_INSECURE` and `_SOURCES` — and anything a config file reads from `process.env` — no longer need `dotenv` or an `export` before the command: `"pull:api": "npx @mrzr/openapi-forge pull --ca certs/internal-root-ca.crt"`.

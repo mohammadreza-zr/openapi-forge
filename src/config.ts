@@ -1,8 +1,9 @@
 // The options a run reads, their defaults, and how a config file and the
 // command line are laid over them.
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 import { HTTP_CLIENTS } from "./runtime/client.js";
 import { LIBRARIES, LIBRARY_NAMES } from "./runtime/libraries/index.js";
@@ -13,12 +14,25 @@ import type {
   RuntimeConfig,
 } from "./types.js";
 
+/**
+ * The data formats come first: YAML, JSON, or an rc file (YAML or JSON). A
+ * script is read too, because it is the only place a `transform` function can
+ * be written.
+ */
 export const CONFIG_FILES = [
+  "openapi-forge.config.yaml",
+  "openapi-forge.config.yml",
+  "openapi-forge.config.json",
+  ".openapi-forgerc",
+  ".openapi-forgerc.yaml",
+  ".openapi-forgerc.yml",
+  ".openapi-forgerc.json",
   "openapi-forge.config.mjs",
   "openapi-forge.config.js",
   "openapi-forge.config.cjs",
-  "openapi-forge.config.json",
 ];
+
+const SCRIPT = /\.(c|m)?js$/;
 
 /**
  * What the emitted code imports. With `client: "builtin"` these point at the
@@ -164,6 +178,39 @@ async function exists(file: string): Promise<boolean> {
   }
 }
 
+async function readData(file: string): Promise<unknown> {
+  const text = (await readFile(file, "utf8")).replace(/^\uFEFF/, "");
+  const json = file.endsWith(".json");
+  try {
+    return json ? JSON.parse(text) : parseYaml(text);
+  } catch (error) {
+    throw new Error(
+      `openapi-forge: ${file} is not valid ${json ? "JSON" : "YAML"} (${(error as Error).message})`,
+    );
+  }
+}
+
+/** A config that names an option nothing reads is a typo, so it says so. */
+function checkOptions(file: string, config: unknown, data = false): ForgeConfig {
+  if (config === null || config === undefined) return {};
+  if (!isObject(config)) {
+    throw new Error(`openapi-forge: ${file} must hold a mapping of options`);
+  }
+  for (const key of Object.keys(config)) {
+    if (!(key in DEFAULTS)) {
+      throw new Error(
+        `openapi-forge: unknown option "${key}" in ${file} (options: ${Object.keys(DEFAULTS).join(", ")})`,
+      );
+    }
+  }
+  if (data && config.transform !== undefined) {
+    throw new Error(
+      `openapi-forge: "transform" takes functions, which ${file} cannot hold; put it in openapi-forge.config.mjs`,
+    );
+  }
+  return config as ForgeConfig;
+}
+
 /** The config file of `cwd` — the one named, or the first default found. */
 export async function loadConfigFile(
   cwd: string,
@@ -177,16 +224,13 @@ export async function loadConfigFile(
         throw new Error(`openapi-forge: config file not found — ${file}`);
       continue;
     }
-    if (file.endsWith(".json")) {
-      const { readFile } = await import("node:fs/promises");
-      return { file, config: JSON.parse(await readFile(file, "utf8")) };
+    if (SCRIPT.test(file)) {
+      const mod = await import(pathToFileURL(file).href);
+      const config = mod.default ?? mod.config ?? {};
+      const given = typeof config === "function" ? await config() : config;
+      return { file, config: checkOptions(file, given) };
     }
-    const mod = await import(pathToFileURL(file).href);
-    const config = mod.default ?? mod.config ?? {};
-    return {
-      file,
-      config: typeof config === "function" ? await config() : config,
-    };
+    return { file, config: checkOptions(file, await readData(file), true) };
   }
   return { file: null, config: {} };
 }

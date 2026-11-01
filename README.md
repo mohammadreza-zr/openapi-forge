@@ -72,7 +72,7 @@ The output is plain, readable TypeScript that is formatted with your own Prettie
 
 ```bash
 npm i -D @mrzr/openapi-forge
-npx openapi-forge init                       # writes openapi-forge.config.mjs
+npx openapi-forge init                       # writes openapi-forge.config.yaml
 npx openapi-forge --input swagger.json --out src/api/generated --api-prefix /api/v1
 ```
 
@@ -148,12 +148,10 @@ export function useCreatePetMutation(options?: ApiMutationOptions<Pet, CreatePet
 
 Two independent choices: `library` is what the hooks wrap; `http` is what the built-in runtime sends requests with.
 
-```js
-export default defineConfig({
-  library: "vue-query",   // see the table
-  http: "axios",          // "api-client" (default) | "fetch" | "axios" | "angular"
-  target: "hooks",        // "requests" stops at plain request functions
-});
+```yaml
+library: vue-query   # see the table
+http: axios          # api-client (default) | fetch | axios | angular
+target: hooks        # "requests" stops at plain request functions
 ```
 
 | `library` | hooks | arguments | packages the runtime imports |
@@ -207,19 +205,16 @@ What the generator does decide, from the document, is the request: the route (fi
 
 `client: "custom"` writes no runtime; the generated code imports yours. Everything it imports and calls is configurable — defaults are the built-in runtime, override what differs:
 
-```js
-export default defineConfig({
-  client: "custom",
-  runtime: {
-    callers: { module: "@/lib/http", get: "apiGet", post: "apiPost", put: "apiPut", patch: "apiPatch", delete: "apiDelete" },
-    hooks: { module: "../hooks", query: "useApiQuery", mutation: "useApiMutation", toValue: "toValue" },
-    types: { module: "../types", request: "GeneratedRequestConfig", query: "ApiQueryOptions", mutation: "ApiMutationOptions", maybeGetter: "MaybeGetter" },
-    list: { name: "ApiListData", module: "@/types", count: "count", items: "list" },   // or false
-    envelope: { name: "ApiEnvelope", module: "../../types/api", result: "result", data: "data", keys: ["result", "code", "message", "data"] }, // or false
-    requestKeys: { query: "params", pathParams: "addTemplateToUrl", formData: "isFormData", baseUrl: "baseUrl", signal: "signal", headers: "headers", envelope: "isEnvelope", body: "body", responseType: "responseType" },
-    services: { module: "@/config/api", fn: "serviceBaseUrl" },   // or { baseUrls: { users: "https://…" } }
-  },
-});
+```yaml
+client: custom
+runtime:
+  callers: { module: "@/lib/http", get: apiGet, post: apiPost, put: apiPut, patch: apiPatch, delete: apiDelete }
+  hooks: { module: "../hooks", query: useApiQuery, mutation: useApiMutation, toValue: toValue }
+  types: { module: "../types", request: GeneratedRequestConfig, query: ApiQueryOptions, mutation: ApiMutationOptions, maybeGetter: MaybeGetter }
+  list: { name: ApiListData, module: "@/types", count: count, items: list }   # or false
+  envelope: { name: ApiEnvelope, module: "../../types/api", result: result, data: data, keys: [result, code, message, data] }   # or false
+  requestKeys: { query: params, pathParams: addTemplateToUrl, formData: isFormData, baseUrl: baseUrl, signal: signal, headers: headers, envelope: isEnvelope, body: body, responseType: responseType }
+  services: { module: "@/config/api", fn: serviceBaseUrl }   # or { baseUrls: { users: "https://…" } }
 ```
 
 Module paths are written as-is into the generated files, so paths relative to the output folder must be relative to it. `library` still decides how the generated hooks are named (`use…`, `create…`, `inject…`) and whether they read their arguments through `toValue` / `MaybeGetter` (the reactive libraries) — a custom runtime has to export those two names then, and its wrappers are named `<prefix>ApiQuery` by default.
@@ -292,17 +287,15 @@ Give `input` a folder of documents (named after their files) or `{ name: fileOrU
 
 Off by default, so the default output stays small.
 
-```js
-export default defineConfig({
-  zod: true,       // schemas.ts: a Zod validator per model, typed as `z.ZodType<Model>`
-  infinite: true,  // use<Op>InfiniteQuery for every paged read with `start` + `offset`
-  // infinite: { start: "page", size: "limit" },   // other paging parameter names
-});
+```yaml
+zod: true       # schemas.ts: a Zod validator per model, typed as `z.ZodType<Model>`
+infinite: true  # use<Op>InfiniteQuery for every paged read with `start` + `offset`
+# infinite: { start: page, size: limit }   # other paging parameter names
 ```
 
 `zod` needs the `zod` package. `infinite` needs `useApiInfiniteQuery` and `ApiInfiniteQueryOptions` in a custom runtime (the built-in one writes them). It applies to reads that answer `ApiListData` (so `count` and `list` must be `required`, see [Answers](#answers-envelopes-and-errors)) and take no path id; header parameters are arguments of the hook, as in any other read.
 
-`transform` changes names and operations for what a document gets wrong:
+`transform` changes names and operations for what a document gets wrong. It takes functions, so it is the one option a YAML or JSON file cannot hold: write it in `openapi-forge.config.mjs`. Only one config file is read, the first found, so a script that holds `transform` holds all the other options too:
 
 ```js
 transform: {
@@ -321,7 +314,7 @@ transform: {
 | `openapi-forge pull` | fetch the documents in `sources` into `specsDir`, report what changed, then generate |
 | `openapi-forge diff <old> <new>` | report breaking / risky / safe changes between two documents (files or URLs) |
 | `openapi-forge doctor` | check the config, input, output, installed packages and runtime modules |
-| `openapi-forge init` | write a starter `openapi-forge.config.mjs` |
+| `openapi-forge init` | write a starter `openapi-forge.config.yaml` |
 
 Flags: `--config`, `--input`, `--out`, `--api-prefix`, `--tags a,b`, `--exclude-tags a,b`,
 `--target hooks|requests`, `--library <name>`, `--http api-client|fetch|axios|angular`, `--client builtin|custom`,
@@ -339,38 +332,39 @@ The command line wins over the config file, which wins over the defaults.
 
 ## Config reference
 
-`openapi-forge.config.{mjs,js,cjs,json}` — all keys optional:
+The config is data: `openapi-forge.config.yaml`, `.yml` or `.json`, or an rc file (`.openapi-forgerc`, with the same `.yaml`, `.yml` and `.json` variants), searched in the folder you run it from in that order, or any file you pass with `--config`. A file ending in `.json` is read as JSON and any other as YAML, which includes the rc file with no extension; JSON is valid YAML, so that file may hold either. All keys are optional. An option the tool does not know, such as a typo, is an error that names the file and lists the valid ones.
+
+```yaml
+input: openapi.json          # file | URL | folder of documents | { service: fileOrUrl }
+out: src/api/generated
+apiPrefix: /api/v1           # stripped from every route
+baseUrlEnv: VITE_API_URL     # the variable axios / fetch / Angular read the base URL from; api-client finds its own
+client: builtin              # builtin | custom
+target: hooks                # hooks | requests
+library: react-query         # vue-query | svelte-query | solid-query | angular-query | swr
+http: api-client             # fetch | axios | angular - for the built-in runtime
+tags: { include: [], exclude: [] }
+zod: false
+infinite: false
+headers: { Authorization: "Bearer …" }   # for a URL input
+tls: { insecure: false, ca: internal-ca.pem }
+format: prettier             # or false
+sources: { users: "https://host/users/openapi.yaml" }   # for `pull`
+specsDir: openapi-specs
+decisionsFile: openapi-forge.decisions.json
+generatorName: openapi-forge # the banner of every file
+verbose: false
+# runtime: see "Your own transport"
+# transform: see "Opt-in extras" (functions: only a script config can hold it)
+```
+
+A script (`openapi-forge.config.mjs`, `.js` or `.cjs`) is read after all of these. It is the only place `transform` can go. It default-exports the object, or a function (sync or async) that returns it, and `defineConfig` only gives your editor the types:
 
 ```js
 import { defineConfig } from "@mrzr/openapi-forge";
 
-export default defineConfig({
-  input: "openapi.json",          // file | URL | folder of documents | { service: fileOrUrl }
-  out: "src/api/generated",
-  apiPrefix: "/api/v1",           // stripped from every route
-  baseUrlEnv: "VITE_API_URL",     // the variable axios / fetch / Angular read the base URL from; api-client finds its own
-  client: "builtin",              // "builtin" | "custom"
-  target: "hooks",                // "hooks" | "requests"
-  library: "react-query",         // "vue-query" | "svelte-query" | "solid-query" | "angular-query" | "swr"
-  http: "api-client",             // "fetch" | "axios" | "angular" — for the built-in runtime
-  tags: { include: [], exclude: [] },
-  zod: false,
-  infinite: false,
-  headers: { Authorization: "Bearer …" },   // for a URL input
-  tls: { insecure: false, ca: "internal-ca.pem" },
-  format: "prettier",             // or false
-  sources: { users: "https://host/users/openapi.yaml" },  // for `pull`
-  specsDir: "openapi-specs",
-  decisionsFile: "openapi-forge.decisions.json",
-  generatorName: "openapi-forge", // the banner of every file
-  verbose: false,
-
-  runtime: { /* see "Your own transport" */ },
-  transform: { /* see "Opt-in extras" */ },
-});
+export default defineConfig({ input: "openapi.json", transform: { /* see "Opt-in extras" */ } });
 ```
-
-The config may also export a function (sync or async) that returns the object.
 
 ## Keeping up with a changing spec
 

@@ -27,10 +27,10 @@ Usage
   openapi-forge pull [options]         fetch the documents named in \`sources\`, then generate
   openapi-forge diff <old> <new>       what changed between two documents (files or URLs)
   openapi-forge doctor                 check the config, input, output and installed packages
-  openapi-forge init                   write a starter openapi-forge.config.mjs
+  openapi-forge init                   write a starter openapi-forge.config.yaml
 
 Options
-  --config <file>        config file (default: openapi-forge.config.{mjs,js,cjs,json})
+  --config <file>        config file (default: openapi-forge.config.yaml, .yml or .json, or an .openapi-forgerc file)
   --input <path|url>     a document, or a folder of documents (one per service)
   --out <dir>            output folder
   --api-prefix <path>    prefix stripped from emitted routes (e.g. /api/v1)
@@ -64,37 +64,33 @@ Environment (also read from .env.local and .env in the current folder; the shell
   OPENAPI_FORGE_CA, OPENAPI_FORGE_SOURCES (name=url;name2=url2)
 `;
 
-const STARTER = `// @ts-check
-import { defineConfig } from "@mrzr/openapi-forge";
+const STARTER = `# A document (file or URL), a folder of documents, or a map of { service: fileOrUrl }.
+input: openapi.json
+out: src/api/generated
 
-export default defineConfig({
-  // A document (file or URL), a folder of documents, or { service: fileOrUrl }.
-  input: "openapi.json",
-  out: "src/api/generated",
+# Stripped from every route, so the base URL can carry it: "/api/v1".
+apiPrefix: ""
 
-  // Stripped from every route, so the base URL can carry it: "/api/v1".
-  apiPrefix: "",
+# The environment variable axios, fetch and Angular read the API's base URL
+# from (import.meta.env.VITE_API_URL); @mrzr/api-client finds its own.
+baseUrlEnv: VITE_API_URL
 
-  // The environment variable axios, fetch and Angular read the API's base URL
-  // from (import.meta.env.VITE_API_URL); @mrzr/api-client finds its own.
-  baseUrlEnv: "VITE_API_URL",
+# "builtin" writes client.ts / hooks.ts / types.ts once; "custom" uses
+# your own transport - see the README for the \`runtime\` it needs.
+client: builtin
 
-  // "builtin" writes client.ts / hooks.ts / types.ts once; "custom" uses
-  // your own transport — see the README for the \`runtime\` it needs.
-  client: "builtin",
+# "hooks" adds hooks and key factories; "requests" stops at functions.
+target: hooks
 
-  // "hooks" adds hooks and key factories; "requests" stops at functions.
-  target: "hooks",
+# The library the hooks wrap: "react-query", "vue-query", "svelte-query",
+# "solid-query", "angular-query" or "swr". With the built-in runtime,
+# "api-client" (@mrzr/api-client), "fetch", "axios" or Angular's "angular"
+# (HttpClient) sends the requests.
+library: react-query
+http: api-client
 
-  // The library the hooks wrap: "react-query", "vue-query", "svelte-query",
-  // "solid-query", "angular-query" or "swr". With the built-in runtime,
-  // "api-client" (@mrzr/api-client), "fetch", "axios" or Angular's "angular" (HttpClient) sends the requests.
-  library: "react-query",
-  http: "api-client",
-
-  // tags: { include: [], exclude: [] },
-  // sources: { users: "https://host/users/openapi.yaml" },   // for \`openapi-forge pull\`
-});
+# tags: { include: [], exclude: [] }
+# sources: { users: "https://host/users/openapi.yaml" }   # for \`openapi-forge pull\`
 `;
 
 const COMMANDS = ["generate", "pull", "diff", "doctor", "init"] as const;
@@ -226,15 +222,15 @@ async function main() {
   }
 
   if (command === "init") {
-    const file = resolve(cwd, "openapi-forge.config.mjs");
+    const file = resolve(cwd, "openapi-forge.config.yaml");
     await writeFile(file, STARTER, { flag: "wx" }).catch((error) => {
       if (error.code === "EEXIST")
         throw new Error(
-          "openapi-forge: openapi-forge.config.mjs already exists.",
+          "openapi-forge: openapi-forge.config.yaml already exists.",
         );
       throw error;
     });
-    return console.log("openapi-forge: wrote openapi-forge.config.mjs");
+    return console.log("openapi-forge: wrote openapi-forge.config.yaml");
   }
 
   const { config, file: configFile } = await loadConfigFile(cwd, values.config);
