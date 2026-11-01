@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The README writes `npx @mrzr/openapi-forge`, not `npx openapi-forge`: without a local install, the bare name runs a different package of that name from npm.
+
 ## 0.4.0
 
 - **The config can be data: YAML, JSON or an rc file.** `openapi-forge.config.yaml`, `.yml` and `.json`, and `.openapi-forgerc` with the same `.yaml`, `.yml` and `.json` variants, are searched first, in that order. A file ending in `.json` is read as JSON and any other as YAML, so the rc file with no extension may hold either. YAML allows comments, which JSON does not. `openapi-forge init` now writes `openapi-forge.config.yaml`.

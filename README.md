@@ -4,7 +4,7 @@ Generate a typed TypeScript API layer — models, request functions, query keys 
 
 ```bash
 npm i -D @mrzr/openapi-forge
-npx openapi-forge --input swagger.json --out src/api/generated
+npx @mrzr/openapi-forge --input swagger.json --out src/api/generated
 ```
 
 The output is plain, readable TypeScript that is formatted with your own Prettier and is **deterministic**, so `--check` can fail CI when the committed layer is stale.
@@ -72,8 +72,8 @@ The output is plain, readable TypeScript that is formatted with your own Prettie
 
 ```bash
 npm i -D @mrzr/openapi-forge
-npx openapi-forge init                       # writes openapi-forge.config.yaml
-npx openapi-forge --input swagger.json --out src/api/generated --api-prefix /api/v1
+npx @mrzr/openapi-forge init                       # writes openapi-forge.config.yaml
+npx @mrzr/openapi-forge --input swagger.json --out src/api/generated --api-prefix /api/v1
 ```
 
 With the default `client: "builtin"` small files are written **once** next to the layer
@@ -390,9 +390,9 @@ Severity: **breaking** (removed or retyped operation, parameter, property, respo
 ## Use in CI
 
 ```bash
-npx openapi-forge --check                       # fails when the committed layer is stale
-npx openapi-forge diff main.yaml pr.yaml --fail-on breaking
-npx openapi-forge doctor                        # fails on a missing package or input
+npx @mrzr/openapi-forge --check                       # fails when the committed layer is stale
+npx @mrzr/openapi-forge diff main.yaml pr.yaml --fail-on breaking
+npx @mrzr/openapi-forge doctor                        # fails on a missing package or input
 ```
 
 `--check` never asks questions; with several services it fails listing the decisions that are still open.
